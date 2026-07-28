@@ -1,0 +1,51 @@
+# SOAR Playbook Builder — asset configuration template
+#
+# Copy values into your SOAR asset when creating/editing the Playbook Builder asset
+# (SOAR → Asset Configuration). Field names match soar_playbook_builder.json.
+#
+# Mode A (templates only): leave mcp_bridge_url empty or at default.
+# Mode B (NL + LLM): set mcp_bridge_url to your MCP agent bridge.
+
+# --- Required for Mode B only ---
+mcp_bridge_url: ""  # e.g. http://10.0.0.5:8003/agent
+
+# --- Recommended ---
+ai_instructions: >-
+  Describe playbooks in plain language — preview, validate, and import into SOAR.
+  Use ES failed-logins or indicator enrichment templates when starting from a notable.
+
+# Optional REST token if browser session loopback fails during import
+# Create under Administration → Users → Authentication for REST API
+soar_rest_token: ""
+
+# --- Scaffold / import defaults ---
+# Map scaffold asset keys → configured SOAR asset names
+asset_defaults: |
+  {
+    "soar": "local",
+    "okta": "okta_prod",
+    "slack": "slack_soc"
+  }
+
+# Constants and assets applied during readiness auto-fix
+playbook_defaults_json: |
+  {
+    "constants": {"SLACK_CHANNEL": "#soc-alerts"},
+    "assets": {"slack": "slack_soc"}
+  }
+
+# --- Optional integrations ---
+es_web_url: ""  # e.g. https://es.example.com:8000
+
+# Air-gap: air_gapped | restricted | connected
+operating_mode: connected
+
+# Default UI persona: studio | assistant | coach | tutor
+default_ui_mode: studio
+
+# --- Advanced (SOAR 6.x Python upgrade) ---
+phenv_use_sudo: "true"
+phenv_path: ""  # default: $PHANTOM_HOME/bin/phenv
+
+# --- Dev / E2E (not SOAR asset fields — use scripts/env.e2e.local) ---
+# See scripts/env.e2e.example and sidecar-ui/.env.example for local UI dev.
