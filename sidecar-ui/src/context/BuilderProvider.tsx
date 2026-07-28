@@ -129,6 +129,10 @@ export interface BuilderContextValue {
   provisionDemoCase: (caseRow: CaseSummary) => Promise<void>;
   provisioningCaseId: string;
   apiGet: (qs: Record<string, string | undefined>) => Promise<BuilderResponse>;
+  apiPost: (
+    body: Record<string, unknown>,
+    timeoutMs?: number,
+  ) => Promise<BuilderResponse>;
   checkBridgeStatus: () => Promise<void>;
   handleFixEnvironment: () => Promise<void>;
   handleSetupAction: (action: string) => Promise<void>;
@@ -244,12 +248,32 @@ export function BuilderProvider({ aiInstructions, defaultUiMode, children }: Bui
         setPatternCatalog(parsed.patterns);
         setPatternsByCategory(parsed.byCategory);
         setOrgTemplateCount(parsed.orgTemplateCount);
-        return { orgErrors: parsed.orgErrors };
+        const diagnostics = [
+          ...parsed.orgErrors.map((item) => `Organization template error: ${item}`),
+          ...parsed.orgWarnings.map((item) => `Organization template warning: ${item}`),
+        ];
+        if (diagnostics.length > 0) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: nextMsgId(),
+              role: "bot",
+              text: diagnostics.join("\n"),
+            },
+          ]);
+        }
+        return {
+          orgErrors: parsed.orgErrors,
+          orgWarnings: parsed.orgWarnings,
+        };
       }
     } catch {
       /* use fallback catalog */
     }
-    return { orgErrors: [] as string[] };
+    return {
+      orgErrors: [] as string[],
+      orgWarnings: [] as string[],
+    };
   }, [api]);
 
   const setCoachTab = useCallback(
@@ -538,12 +562,9 @@ export function BuilderProvider({ aiInstructions, defaultUiMode, children }: Bui
       const lane =
         opts?.lane ?? (coachTab === "explain" ? "tutor" : undefined);
       try {
-        let data = await api.apiChat(msg, currentPattern, lane);
-        if (!responseHasPayload(data)) {
-          data = await api.apiGet({ message: msg, ...(lane ? { lane } : {}) });
-        }
+        let data = await api.apiChat(msg, currentPattern, lane, currentSource);
         if (!responseHasPayload(data) && /servicenow|service now|p1 incident/i.test(msg)) {
-          data = await api.apiGet({ action: "scaffold", pattern: "servicenow-incident" });
+          data = await api.apiPost({ action: "scaffold", pattern: "servicenow-incident" });
         }
         applyResponse(data);
       } catch (e) {
@@ -564,7 +585,7 @@ export function BuilderProvider({ aiInstructions, defaultUiMode, children }: Bui
         setBusy(false);
       }
     },
-    [addMsg, api, applyResponse, busy, coachTab, currentPattern, input, usingMocks],
+    [addMsg, api, applyResponse, busy, coachTab, currentPattern, currentSource, input, usingMocks],
   );
 
   const stopImportTimer = useCallback(() => {
@@ -778,7 +799,7 @@ export function BuilderProvider({ aiInstructions, defaultUiMode, children }: Bui
   const handleScaffold = useCallback(async () => {
     try {
       applyResponse(
-        await api.apiGet({ action: "scaffold", pattern: currentPattern }),
+        await api.apiPost({ action: "scaffold", pattern: currentPattern }),
       );
     } catch (e) {
       addMsg(`Generate error: ${e}`, "bot");
@@ -788,7 +809,7 @@ export function BuilderProvider({ aiInstructions, defaultUiMode, children }: Bui
   const handleValidate = useCallback(async () => {
     try {
       applyResponse(
-        await api.apiGet({ action: "validate", pattern: currentPattern }),
+        await api.apiPost({ action: "validate", pattern: currentPattern }),
       );
     } catch (e) {
       addMsg(`Validate error: ${e}`, "bot");
@@ -849,7 +870,7 @@ export function BuilderProvider({ aiInstructions, defaultUiMode, children }: Bui
       addMsg(`Starting guided scenario: ${scenario.label}`, "bot");
       try {
         applyResponse(
-          await api.apiGet({ action: "scaffold", pattern: scenario.pattern }),
+          await api.apiPost({ action: "scaffold", pattern: scenario.pattern }),
         );
       } catch (e) {
         addMsg(`Scenario error: ${e}`, "bot");
@@ -962,7 +983,7 @@ export function BuilderProvider({ aiInstructions, defaultUiMode, children }: Bui
     void checkBridgeStatus();
     const pid = readUrlContext().contextPlaybookId;
     if (pid && !shouldUseMocks()) {
-      void api.apiGet({ action: "preview", playbook_id: pid }).then((data) => {
+      void api.apiPost({ action: "preview", playbook_id: pid }).then((data) => {
         if (responseHasPayload(data)) applyResponse(data);
       });
     }
@@ -1140,6 +1161,7 @@ export function BuilderProvider({ aiInstructions, defaultUiMode, children }: Bui
     provisionDemoCase,
     provisioningCaseId,
     apiGet: api.apiGet,
+    apiPost: api.apiPost,
     checkBridgeStatus,
     handleFixEnvironment,
     handleSetupAction,

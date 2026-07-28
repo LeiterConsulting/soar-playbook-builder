@@ -28,7 +28,42 @@ _RETRY_MARKERS = (
     "not found rest",
     "session token",
     "Authentication failed",
+    "CERTIFICATE_VERIFY_FAILED",
+    "certificate verify failed",
+    "IP address mismatch",
+    "Hostname mismatch",
 )
+MAX_SOAR_REST_RESPONSE_BYTES = 4 * 1024 * 1024
+ALLOWED_SOAR_REST_SCHEMES = frozenset({"http", "https"})
+ALLOWED_SOAR_REST_METHODS = frozenset(
+    {"GET", "POST", "PUT", "PATCH", "DELETE"}
+)
+
+
+def _safe_header_value(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text or any(ord(char) < 32 or ord(char) == 127 for char in text):
+        return None
+    return text
+
+
+def _validate_rest_base(base: str) -> str:
+    normalized = str(base or "").strip().rstrip("/")
+    parsed = urllib.parse.urlsplit(normalized)
+    if (
+        parsed.scheme.lower() not in ALLOWED_SOAR_REST_SCHEMES
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("SOAR REST base URL must be an HTTP(S) origin/path")
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("SOAR REST base URL has an invalid port") from exc
+    return normalized
 
 
 def _normalize_rest_path(path: str) -> str:
@@ -41,7 +76,7 @@ def _normalize_rest_path(path: str) -> str:
 def _join_rest_url(base: str, path: str) -> str:
     """Join REST base + endpoint without duplicating ``/rest/``."""
     normalized = _normalize_rest_path(path)
-    root = (base or "").rstrip("/")
+    root = _validate_rest_base(base)
     if root.endswith("/rest"):
         return f"{root}/{normalized}"
     return f"{root}/rest/{normalized}"
@@ -151,11 +186,22 @@ def _django_rest_targets(request: Any) -> list[tuple[str, str | None]]:
     connect_hosts: list[str] = []
     platform_base = _platform_rest_base_url()
     if platform_base:
-        connect_hosts.append(platform_base.rstrip("/"))
+        try:
+            connect_hosts.append(_validate_rest_base(platform_base))
+        except ValueError:
+            pass
 
     for candidate in (hostname, server_name, "127.0.0.1", "localhost"):
-        if candidate and candidate not in connect_hosts:
-            connect_hosts.append(f"{scheme}://{candidate}{port_suffix}")
+        if not candidate:
+            continue
+        try:
+            candidate_base = _validate_rest_base(
+                f"{scheme}://{candidate}{port_suffix}"
+            )
+        except ValueError:
+            continue
+        if candidate_base not in connect_hosts:
+            connect_hosts.append(candidate_base)
 
     host_headers: list[str | None] = [client_host, None]
     for candidate in ("127.0.0.1", "localhost", server_name, hostname):
@@ -190,7 +236,10 @@ def build_phantom_rest_url(path: str, *, request: Any | None = None, target_inde
 
     platform_base = _platform_rest_base_url()
     if platform_base:
-        return _join_rest_url(platform_base, normalized)
+        try:
+            return _join_rest_url(platform_base, normalized)
+        except ValueError:
+            pass
 
     for mod in _load_phantom_modules():
         fn = getattr(mod, "build_phantom_rest_url", None)
@@ -212,18 +261,19 @@ def _request_auth_headers(request: Any) -> dict[str, str]:
         return headers
 
     token = _extract_ph_auth_token(request)
-    if token:
-        headers["ph-auth-token"] = token
+    safe_token = _safe_header_value(token)
+    if safe_token:
+        headers["ph-auth-token"] = safe_token
 
-    auth = request.META.get("HTTP_AUTHORIZATION")
+    auth = _safe_header_value(request.META.get("HTTP_AUTHORIZATION"))
     if auth:
         headers["Authorization"] = auth
 
-    csrf = request.META.get("HTTP_X_CSRFTOKEN")
+    csrf = _safe_header_value(request.META.get("HTTP_X_CSRFTOKEN"))
     if csrf:
         headers["X-CSRFToken"] = csrf
 
-    referer = request.META.get("HTTP_REFERER")
+    referer = _safe_header_value(request.META.get("HTTP_REFERER"))
     if referer:
         headers["Referer"] = referer
 
@@ -235,7 +285,18 @@ def _request_cookie_header(request: Any) -> str | None:
     cookies = getattr(request, "COOKIES", None)
     if not cookies:
         return None
-    return "; ".join(f"{k}={v}" for k, v in cookies.items())
+    values: list[str] = []
+    for key, value in cookies.items():
+        safe_key = _safe_header_value(key)
+        safe_value = _safe_header_value(value)
+        if (
+            safe_key
+            and safe_value
+            and all(char not in safe_key for char in "=;,")
+            and all(char not in safe_value for char in ";\r\n")
+        ):
+            values.append(f"{safe_key}={safe_value}")
+    return "; ".join(values) or None
 
 
 def _should_retry_loopback(error_text: str) -> bool:
@@ -262,8 +323,9 @@ def _single_django_request(
         "Accept": "application/json",
     }
     headers.update(_request_auth_headers(request))
-    if host_header:
-        headers["Host"] = host_header
+    safe_host_header = _safe_header_value(host_header)
+    if safe_host_header:
+        headers["Host"] = safe_host_header
 
     cookie = _request_cookie_header(request)
     if cookie:
@@ -271,17 +333,32 @@ def _single_django_request(
 
     data = None
     method_upper = method.upper()
+    if method_upper not in ALLOWED_SOAR_REST_METHODS:
+        return False, "SOAR REST method is not allowed"
     if body is not None and method_upper != "GET":
         data = json.dumps(body).encode("utf-8")
 
     req = urllib.request.Request(url, data=data, headers=headers, method=method_upper)
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-
+    cfg = getattr(request, "_pb_config", None) or {}
+    allow_insecure_tls = str(
+        cfg.get("soar_loopback_allow_insecure_tls") or ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    ca_bundle = str(cfg.get("soar_loopback_ca_bundle") or "").strip() or None
     try:
-        with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
+        if allow_insecure_tls:
+            ctx = ssl._create_unverified_context()  # noqa: SLF001  # nosec B323
+        else:
+            ctx = ssl.create_default_context(cafile=ca_bundle)
+        # URL was constrained to an HTTP(S) origin by _validate_rest_base.
+        with urllib.request.urlopen(  # nosec B310
+            req,
+            context=ctx,
+            timeout=timeout,
+        ) as resp:
+            body_bytes = resp.read(MAX_SOAR_REST_RESPONSE_BYTES + 1)
+            if len(body_bytes) > MAX_SOAR_REST_RESPONSE_BYTES:
+                return False, "SOAR REST response exceeded the byte limit"
+            raw = body_bytes.decode("utf-8", errors="replace")
             if not raw.strip():
                 return True, {}
             try:

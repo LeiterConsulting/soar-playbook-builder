@@ -42,13 +42,18 @@ Copy these from your **old Playbook Builder asset** (SOAR UI → Apps → asset 
 
 | Asset field | Required? | Example | Why |
 |-------------|-----------|---------|-----|
-| `mcp_bridge_url` | Mode B only | `http://10.0.0.5:8003/agent` | Update if SOAR hostname/network changed |
+| `mcp_bridge_url` | Mode B only | `https://bridge.internal:8003/agent` | Update if SOAR hostname/network changed |
+| `mcp_bridge_allow_insecure_http` | Lab only | `false` | Explicit override for isolated HTTP bridge testing |
+| `soar_loopback_ca_bundle` | Private CA only | PEM path | Trust anchor for internal SOAR REST calls |
+| `soar_loopback_allow_insecure_tls` | Lab only | `false` | Temporary bypass for loopback certificate validation |
 | `ai_instructions` | Optional | `SOC — classic Python playbooks` | Header text in sidecar |
 | `asset_defaults` | Recommended | `{"okta":"okta","slack":"slack_lab"}` | Maps template placeholders → your assets |
 | `playbook_defaults_json` | Optional | Constants + extra asset maps | Readiness auto-fix |
-| `custom_templates_json` | Optional | Org-specific templates | Your `org-*` patterns |
+| `custom_ir_templates_json` | Optional | Strict org-specific IR templates | Your reviewed `org-*` patterns |
+| `custom_templates_json` | Legacy/lab only | Executable Python templates | Ignored unless the explicit compatibility flag is enabled |
+| `allow_legacy_python_templates` | No | Lab-only compatibility switch | Keep `false` |
 | `es_web_url` | ES stitch | `https://es.example.com:8000` | Back to Mission Control links |
-| `soar_rest_token` | Optional | REST token | Sidecar import when session loopback fails |
+| `soar_rest_token` | Optional secret | REST token | Sidecar import when session loopback fails; re-enter manually after migration |
 | `sample_cases_json` | Optional | Extra demo rows | Merged with built-in 9001–9005 |
 | `operating_mode` | Optional | `connected` / `air_gapped` | Air-gap validator (future steps) |
 
@@ -66,7 +71,7 @@ Use this for air-gapped labs or when MCP is not ready yet.
 
 ```bash
 # On your build machine (or use a pre-built artifact)
-cd packaging/soar-playbook-builder-app
+cd soar-playbook-builder
 ./package_app.sh
 # → dist/soar_playbook_builder.tgz
 ```
@@ -120,7 +125,7 @@ Everything in Mode A, plus:
 
 ### Asset
 
-1. Set `mcp_bridge_url` to e.g. `http://<bridge-host>:8003/agent`.
+1. Set `mcp_bridge_url` to e.g. `https://<bridge-host>:8003/agent`.
 2. Run **test connectivity** on the asset → success.
 3. Sidecar pill should show **AI connected** (not just “Bridge online · no LLM”).
 
@@ -134,7 +139,7 @@ Build tab → Natural Language → try a simple prompt: *“Build an Okta failed
 
 Before shutdown:
 
-- [ ] Save `dist/soar_playbook_builder.tgz` (or rebuild from source tag **v2.22.0**).
+- [ ] Save `dist/soar_playbook_builder.tgz` and `SHA256SUMS` (or rebuild from the source tag matching the manifest version).
 - [ ] Export Playbook Builder **asset configuration** (all JSON fields above).
 - [ ] Export any **custom playbooks** authored via the builder.
 - [ ] Note **MCP bridge** host, port, and LLM env vars.
@@ -156,7 +161,7 @@ On new SOAR:
 From a machine that can reach the new SOAR:
 
 ```bash
-cd packaging/soar-playbook-builder-app
+cd soar-playbook-builder
 SOAR_URL=https://new-soar:8443 SOAR_USER=... SOAR_PASS=... ASSET=playbook_builder \
   ./scripts/print_sidecar_url.sh
 

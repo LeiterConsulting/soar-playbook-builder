@@ -19,7 +19,7 @@ For **manual NL / operator recovery testing** (unsupported prompts, Readiness ga
 Interactive React UI with **Run** buttons, live streaming results, and **Verify ↗** fly-out links:
 
 ```bash
-cd packaging/soar-playbook-builder-app
+cd soar-playbook-builder
 cp scripts/env.e2e.example scripts/env.e2e.local   # edit credentials
 chmod +x scripts/run-e2e-console.sh
 ./scripts/run-e2e-console.sh
@@ -30,7 +30,7 @@ Open **http://127.0.0.1:5174** — walk phases in the sidebar, click **Validate 
 ### Option B — CLI only
 
 ```bash
-cd packaging/soar-playbook-builder-app
+cd soar-playbook-builder
 cp scripts/env.e2e.example scripts/env.e2e.local
 # Edit SOAR_URL, credentials, PB_ASSET, MCP_BRIDGE_URL
 ```
@@ -89,7 +89,7 @@ Each row maps to a check in the HTML report with an **Open** link where applicab
 |-------|------------|---------------------------|
 | SOAR REST reachable | `GET /rest/version` | [SOAR home](SOAR_URL) — login works |
 | App installed | Finds `soar_playbook_builder` in `/rest/app` | **Apps** UI — app enabled |
-| App version | Compares to minimum 2.7.2 | Apps → version column |
+| App version | Compares to the source manifest version | Apps → version column |
 | Asset exists | Finds asset by `PB_ASSET` name | Asset page — `mcp_bridge_url`, `ai_instructions` |
 
 **Typical URLs** (replace placeholders):
@@ -116,8 +116,8 @@ These prove **localized** builder functionality on SOAR without MCP.
 | Check | Automation | Open link — expect |
 |-------|------------|-------------------|
 | Sidecar HTML | `GET …/chat` | Browser sidecar — Playbook Builder UI loads |
-| Hello scaffold | `GET …/chat?action=scaffold&pattern=hello` | JSON with `source` + `preview` |
-| Validate | `GET …/chat?action=validate&pattern=hello` | JSON with `analysis.score` |
+| Hello scaffold | `POST …/chat` with `{"action":"scaffold","pattern":"hello"}` | JSON with `source` + `preview` |
+| Validate | `POST …/chat` with `{"action":"validate","pattern":"hello"}` | JSON with `analysis.score` |
 | Builder steps | `GET …/chat?action=steps` | JSON list of guided steps |
 
 **Manual sign-off:** In the browser sidecar:
@@ -238,7 +238,7 @@ Use this order the first time you validate a new build:
 | SOAR REST error | VPN / wrong URL / creds | Fix `SOAR_URL`, `SOAR_VERIFY_SSL=false` for lab |
 | App not found | `.tgz` not installed | Install `dist/soar_playbook_builder.tgz` |
 | Sidecar 404 | Wrong `directory` in URL | Run `print_sidecar_url.sh` |
-| Scaffold empty | Old app version | Rebuild ≥ 2.7.2 |
+| Scaffold empty | Old app version | Rebuild/install the version declared in the source manifest |
 | Import fails | SCM / permissions | SOAR logs; user needs import rights |
 | Bridge OK on laptop, fail on SOAR | Network path | curl health **from SOAR server** |
 | Templates only in Mode B | Asset URL wrong or bridge down | Fix `mcp_bridge_url`, restart bridge |
@@ -248,7 +248,7 @@ Use this order the first time you validate a new build:
 ## CI integration (optional)
 
 ```yaml
-# Example job snippet — run from packaging/soar-playbook-builder-app
+# Example job snippet — run from the repository root
 - name: E2E validate Mode A
   env:
     SOAR_URL: ${{ secrets.SOAR_URL }}

@@ -10,11 +10,13 @@ import sys
 import tarfile
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_PY = ROOT / "soar_playbook_builder"
 sys.path.insert(0, str(APP_PY))
+MAX_LIVE_RESPONSE_BYTES = 1024 * 1024
 
 from sidecar_url import append_query, build_sidecar_query_params  # noqa: E402
 from es_links import (  # noqa: E402
@@ -43,6 +45,27 @@ class SmokeResult:
     @property
     def success(self) -> bool:
         return not self.failed
+
+
+def _origin(url: str, *, allow_insecure_http: bool = False) -> tuple[str, str, int]:
+    parsed = urlsplit(str(url or "").strip())
+    allowed_schemes = {"https"}
+    if allow_insecure_http:
+        allowed_schemes.add("http")
+    if (
+        parsed.scheme.lower() not in allowed_schemes
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError("live SOAR URL must use an allowed HTTP(S) origin")
+    default_port = 443 if parsed.scheme.lower() == "https" else 80
+    return parsed.scheme.lower(), parsed.hostname.lower(), parsed.port or default_port
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def test_es_link_params(r: SmokeResult) -> None:
@@ -127,8 +150,26 @@ def test_live_soar_es_link(r: SmokeResult) -> None:
         r.skip("live SOAR es_link", "SOAR_URL not set")
         return
 
-    user = os.environ.get("SOAR_USER", "soar_local_admin")
-    pwd = os.environ.get("SOAR_PASS", "password")
+    user = os.environ.get("SOAR_USER", "").strip()
+    pwd = os.environ.get("SOAR_PASS", "")
+    if not user or not pwd:
+        r.skip(
+            "live SOAR es_link",
+            "SOAR_USER and SOAR_PASS must be explicitly set",
+        )
+        return
+    allow_insecure_http = os.environ.get(
+        "SOAR_ALLOW_INSECURE_HTTP",
+        "",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        expected_origin = _origin(
+            soar_url,
+            allow_insecure_http=allow_insecure_http,
+        )
+    except ValueError as exc:
+        r.fail("live SOAR es_link", str(exc))
+        return
     asset = os.environ.get("ASSET", "mcpbridge")
 
     script = ROOT / "scripts" / "print_sidecar_url.sh"
@@ -167,15 +208,33 @@ def test_live_soar_es_link(r: SmokeResult) -> None:
         "RULE_NAME", "Smoke%20Test"
     )
     test_url = test_url + ("&" if "?" in test_url else "?") + "format=json"
+    try:
+        if _origin(
+            test_url,
+            allow_insecure_http=allow_insecure_http,
+        ) != expected_origin:
+            r.fail(
+                "live SOAR es_link",
+                "generated URL is not on the configured SOAR origin",
+            )
+            return
+    except ValueError as exc:
+        r.fail("live SOAR es_link", str(exc))
+        return
 
     import base64
 
     auth = base64.b64encode(f"{user}:{pwd}".encode()).decode()
     req = Request(test_url, headers={"Authorization": f"Basic {auth}"})
+    opener = build_opener(_NoRedirect())
     try:
-        with urlopen(req, timeout=30) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
-            if resp.status not in (200, 302):
+        with opener.open(req, timeout=30) as resp:
+            body_bytes = resp.read(MAX_LIVE_RESPONSE_BYTES + 1)
+            if len(body_bytes) > MAX_LIVE_RESPONSE_BYTES:
+                r.fail("live SOAR es_link HTTP", "response exceeded byte limit")
+                return
+            body = body_bytes.decode("utf-8", errors="replace")
+            if resp.status != 200:
                 r.fail("live SOAR es_link HTTP", f"status {resp.status}")
                 return
             if "format=json" in test_url and "sidecar_url" not in body:
@@ -183,6 +242,26 @@ def test_live_soar_es_link(r: SmokeResult) -> None:
                 return
             r.ok("live SOAR es_link")
     except HTTPError as exc:
+        if exc.code in (301, 302, 303, 307, 308):
+            location = exc.headers.get("Location") if exc.headers else ""
+            try:
+                same_origin = (
+                    _origin(
+                        location,
+                        allow_insecure_http=allow_insecure_http,
+                    )
+                    == expected_origin
+                )
+            except ValueError:
+                same_origin = False
+            if same_origin:
+                r.ok("live SOAR es_link redirect")
+            else:
+                r.fail(
+                    "live SOAR es_link HTTP",
+                    "cross-origin or invalid redirect was blocked",
+                )
+            return
         if exc.code in (401, 403):
             r.skip("live SOAR es_link HTTP", f"{exc.code} auth")
         else:

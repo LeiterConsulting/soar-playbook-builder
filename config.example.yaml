@@ -34,6 +34,15 @@ playbook_defaults_json: |
     "assets": {"slack": "slack_soc"}
   }
 
+# Organization templates: strict IR is the supported trust-boundary format.
+# See sample_data/sample_org_ir_templates.json.
+custom_ir_templates_json: ""
+
+# Legacy executable Python templates are ignored unless this lab-only override
+# is enabled. Keep false for trusted deployments.
+custom_templates_json: ""
+allow_legacy_python_templates: false
+
 # --- Optional integrations ---
 es_web_url: ""  # e.g. https://es.example.com:8000
 
@@ -42,10 +51,6 @@ operating_mode: connected
 
 # Default UI persona: studio | assistant | coach | tutor
 default_ui_mode: studio
-
-# --- Advanced (SOAR 6.x Python upgrade) ---
-phenv_use_sudo: "true"
-phenv_path: ""  # default: $PHANTOM_HOME/bin/phenv
 
 # --- Dev / E2E (not SOAR asset fields — use scripts/env.e2e.local) ---
 # See scripts/env.e2e.example and sidecar-ui/.env.example for local UI dev.

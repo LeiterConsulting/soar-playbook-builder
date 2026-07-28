@@ -163,7 +163,7 @@ TROUBLESHOOTING_ENTRIES: list[CatalogEntry] = [
             "Fix asset preflight first if assets step failed.",
             "Delete duplicate playbook with same slug in SOAR Playbooks, then re-import.",
             "Check SOAR admin permissions for playbook import.",
-            "For Python 2.7 SOAR: run phenv playbooks_to_py3 on SOAR host (see docs).",
+            "If SOAR reports Python 2.7, stop: this app supports SOAR 8.5 / Python 3.13 only. Use Splunk's supported platform migration workflow.",
         ],
         "verify": "Sidecar shows ✓ Synced with playbook id; Open in SOAR opens VPE.",
     },

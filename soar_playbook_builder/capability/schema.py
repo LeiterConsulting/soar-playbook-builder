@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 CapabilitySource = Literal["baseline", "discovered", "merged"]
 EgressTag = Literal["true", "false", "unknown"]
+EvidenceStatus = Literal["verified", "partial", "unavailable"]
+PermissionStatus = Literal["allowed", "denied", "unknown"]
 
 
 @dataclass
@@ -57,6 +59,7 @@ class AppCapability:
     source: CapabilitySource = "discovered"
     first_seen: str = ""
     last_verified: str = ""
+    configuration_keys: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -102,6 +105,14 @@ class CapabilityIndex:
     labels: list[str] = field(default_factory=list)
     severities: list[str] = field(default_factory=list)
     statuses: list[str] = field(default_factory=list)
+    roles: list[str] = field(default_factory=list)
+    permission_principal: str = ""
+    action_permissions: dict[str, PermissionStatus] = field(default_factory=dict)
+    permissions_status: EvidenceStatus = "unavailable"
+    custom_lists: list[str] = field(default_factory=list)
+    custom_lists_status: EvidenceStatus = "unavailable"
+    playbooks: list[str] = field(default_factory=list)
+    playbooks_status: EvidenceStatus = "unavailable"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -116,6 +127,14 @@ class CapabilityIndex:
             "labels": list(self.labels),
             "severities": list(self.severities),
             "statuses": list(self.statuses),
+            "roles": list(self.roles),
+            "permission_principal": self.permission_principal,
+            "action_permissions": dict(self.action_permissions),
+            "permissions_status": self.permissions_status,
+            "custom_lists": list(self.custom_lists),
+            "custom_lists_status": self.custom_lists_status,
+            "playbooks": list(self.playbooks),
+            "playbooks_status": self.playbooks_status,
         }
 
     @classmethod
@@ -152,6 +171,9 @@ class CapabilityIndex:
                 source=str(row.get("source") or "discovered"),  # type: ignore[arg-type]
                 first_seen=str(row.get("first_seen") or ""),
                 last_verified=str(row.get("last_verified") or ""),
+                configuration_keys=[
+                    str(item) for item in row.get("configuration_keys") or []
+                ],
             )
         assets = [
             AssetRecord(**a) if isinstance(a, dict) else AssetRecord(name=str(a))
@@ -173,4 +195,34 @@ class CapabilityIndex:
             labels=[str(x) for x in data.get("labels") or []],
             severities=[str(x) for x in data.get("severities") or []],
             statuses=[str(x) for x in data.get("statuses") or []],
+            roles=[str(x) for x in data.get("roles") or []],
+            permission_principal=str(data.get("permission_principal") or ""),
+            action_permissions={
+                str(key): (
+                    str(value)
+                    if str(value) in ("allowed", "denied", "unknown")
+                    else "unknown"
+                )
+                for key, value in (data.get("action_permissions") or {}).items()
+            },  # type: ignore[arg-type]
+            permissions_status=(
+                str(data.get("permissions_status"))
+                if str(data.get("permissions_status"))
+                in ("verified", "partial", "unavailable")
+                else "unavailable"
+            ),  # type: ignore[arg-type]
+            custom_lists=[str(x) for x in data.get("custom_lists") or []],
+            custom_lists_status=(
+                str(data.get("custom_lists_status"))
+                if str(data.get("custom_lists_status"))
+                in ("verified", "partial", "unavailable")
+                else "unavailable"
+            ),  # type: ignore[arg-type]
+            playbooks=[str(x) for x in data.get("playbooks") or []],
+            playbooks_status=(
+                str(data.get("playbooks_status"))
+                if str(data.get("playbooks_status"))
+                in ("verified", "partial", "unavailable")
+                else "unavailable"
+            ),  # type: ignore[arg-type]
         )

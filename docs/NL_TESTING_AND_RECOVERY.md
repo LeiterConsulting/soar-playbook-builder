@@ -204,7 +204,9 @@ When the request is valid but unsupported by catalog:
 1. **Templates** → pick closest pattern (`es-notable-response`, `servicenow-incident`, etc.).
 2. **Load template** → confirm Preview.
 3. Mode B: follow-up in chat, e.g. *Add a decision block: only proceed if severity is critical.*
-4. Mode A: import starter, finish in VPE or add **org custom template** (`custom_templates_json` on asset — see [CUSTOMIZATION.md](./CUSTOMIZATION.md)).
+4. Mode A: review the starter, finish in VPE after live qualification, or add a
+   **strict org IR template** (`custom_ir_templates_json` on the asset — see
+   [CUSTOMIZATION.md](./CUSTOMIZATION.md)).
 
 ### Tier 3 — Environment fixes (~5–10 min)
 
@@ -222,7 +224,8 @@ When the request is valid but unsupported by catalog:
 When the user’s workflow is legitimate but not in catalog:
 
 1. Capture: prompt, bridge mode, Readiness output, import error, case ID.
-2. Short-term: org **custom template** + NL keywords in `custom_templates_json`.
+2. Short-term: strict org **IR template** + NL keywords in
+   `custom_ir_templates_json`.
 3. Long-term: add scaffold in `pattern_catalog.py` + keywords in `local_nl_build.py`; add troubleshooting entry if recurring.
 
 ---
@@ -260,7 +263,8 @@ When the user’s workflow is legitimate but not in catalog:
 
 ## Shipped templates (offline keyword targets)
 
-Eleven patterns ship in `pattern_catalog.py` (plus org templates via `custom_templates_json`):
+Eleven patterns ship in `pattern_catalog.py` (plus strict org IR templates via
+`custom_ir_templates_json`):
 
 | ID | Category | Integrations |
 |----|----------|--------------|

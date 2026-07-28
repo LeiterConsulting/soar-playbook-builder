@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,11 @@ from capability.schema import (
 
 _BASELINE_DIR = Path(__file__).resolve().parent / "baseline"
 _DEFAULT_INDEX_DIR = Path(__file__).resolve().parent / ".index"
+_INTEGRITY_KEY = "_integrity"
+
+
+class IndexIntegrityError(ValueError):
+    """A persisted capability index failed integrity or shape validation."""
 
 
 def _utc_now() -> str:
@@ -66,6 +73,9 @@ def load_baseline_apps() -> dict[str, AppCapability]:
             source="baseline",
             first_seen=_utc_now(),
             last_verified=_utc_now(),
+            configuration_keys=[
+                str(item) for item in row.get("configuration_keys") or []
+            ],
         )
     return apps
 
@@ -146,6 +156,9 @@ def merge_baseline(discovered: CapabilityIndex) -> CapabilityIndex:
                 source="merged",
                 first_seen=base_app.first_seen or _utc_now(),
                 last_verified=disc_app.last_verified or _utc_now(),
+                configuration_keys=(
+                    disc_app.configuration_keys or base_app.configuration_keys
+                ),
             )
         elif disc_app:
             merged_apps[key] = disc_app
@@ -170,6 +183,14 @@ def merge_baseline(discovered: CapabilityIndex) -> CapabilityIndex:
         labels=discovered.labels or ["events", "investigation"],
         severities=discovered.severities or ["low", "medium", "high", "critical"],
         statuses=discovered.statuses or ["new", "open", "closed"],
+        roles=list(discovered.roles),
+        permission_principal=discovered.permission_principal,
+        action_permissions=dict(discovered.action_permissions),
+        permissions_status=discovered.permissions_status,
+        custom_lists=list(discovered.custom_lists),
+        custom_lists_status=discovered.custom_lists_status,
+        playbooks=list(discovered.playbooks),
+        playbooks_status=discovered.playbooks_status,
     )
 
 
@@ -200,23 +221,144 @@ def index_storage_path() -> Path:
     return _DEFAULT_INDEX_DIR / "capability_index.json"
 
 
+def _backup_path(target: Path) -> Path:
+    return target.with_name(f"{target.stem}.last-good{target.suffix}")
+
+
+def _lock_path(target: Path) -> Path:
+    return target.with_name(f"{target.name}.lock")
+
+
+def _canonical_payload(payload: dict[str, Any]) -> bytes:
+    clean = dict(payload)
+    clean.pop(_INTEGRITY_KEY, None)
+    return json.dumps(
+        clean,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _serialized_index(index: CapabilityIndex) -> bytes:
+    payload = index.to_dict()
+    payload[_INTEGRITY_KEY] = {
+        "algorithm": "sha256",
+        "digest": hashlib.sha256(_canonical_payload(payload)).hexdigest(),
+    }
+    return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _index_from_bytes(raw: bytes) -> CapabilityIndex:
+    data = json.loads(raw.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise IndexIntegrityError("capability index root must be an object")
+    if not isinstance(data.get("apps"), dict):
+        raise IndexIntegrityError("capability index apps must be an object")
+    integrity = data.get(_INTEGRITY_KEY)
+    if integrity is not None:
+        if not isinstance(integrity, dict) or integrity.get("algorithm") != "sha256":
+            raise IndexIntegrityError("capability index integrity metadata is invalid")
+        expected = str(integrity.get("digest") or "")
+        actual = hashlib.sha256(_canonical_payload(data)).hexdigest()
+        if not expected or expected != actual:
+            raise IndexIntegrityError("capability index checksum mismatch")
+    index = CapabilityIndex.from_dict(data)
+    if index.harvest_status not in {"ok", "partial", "failed"}:
+        raise IndexIntegrityError("capability index harvest status is invalid")
+    return index
+
+
+def _atomic_write(path: Path, raw: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def _index_lock(target: Path):
+    lock = _lock_path(target)
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock, "a+b") as handle:
+        try:
+            os.chmod(lock, 0o600)
+        except OSError:
+            pass
+        try:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        except (ImportError, OSError):
+            fcntl = None  # type: ignore[assignment]
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
+
+
 def save_index(index: CapabilityIndex, path: Path | None = None) -> Path:
     target = path or index_storage_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    payload = index.to_dict()
-    with open(target, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, indent=2, sort_keys=True)
-        fh.write("\n")
+    serialized = _serialized_index(index)
+    _index_from_bytes(serialized)
+    with _index_lock(target):
+        if target.is_file():
+            try:
+                previous = target.read_bytes()
+                _index_from_bytes(previous)
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, IndexIntegrityError, TypeError):
+                pass
+            else:
+                _atomic_write(_backup_path(target), previous)
+        _atomic_write(target, serialized)
     return target
 
 
-def load_index(path: Path | None = None) -> CapabilityIndex | None:
+def _load_index_with_status(
+    path: Path | None = None,
+) -> tuple[CapabilityIndex | None, bool, str]:
     target = path or index_storage_path()
-    if not target.is_file():
-        return None
-    with open(target, encoding="utf-8") as fh:
-        data = json.load(fh)
-    return CapabilityIndex.from_dict(data)
+    errors: list[str] = []
+    for candidate, recovered in (
+        (target, False),
+        (_backup_path(target), True),
+    ):
+        if not candidate.is_file():
+            continue
+        try:
+            return _index_from_bytes(candidate.read_bytes()), recovered, "; ".join(errors)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, IndexIntegrityError, TypeError) as exc:
+            errors.append(f"{candidate.name}: {exc}")
+    return None, False, "; ".join(errors)
+
+
+def load_index(path: Path | None = None) -> CapabilityIndex | None:
+    index, _, _ = _load_index_with_status(path)
+    return index
 
 
 def build_index(
@@ -259,7 +401,7 @@ def build_index(
 def index_status(path: Path | None = None) -> dict[str, Any]:
     """Summary for connector action and environment UI."""
     target = path or index_storage_path()
-    index = load_index(path=target)
+    index, recovered, integrity_error = _load_index_with_status(path=target)
     if index is None:
         baseline = load_baseline_apps()
         return {
@@ -271,9 +413,13 @@ def index_status(path: Path | None = None) -> dict[str, Any]:
             "index_version": "",
             "built_at": "",
             "harvest_status": "missing",
-            "harvest_errors": ["No persisted index — run rebuild capability index"],
+            "harvest_errors": [
+                integrity_error or "No persisted index — run rebuild capability index"
+            ],
             "stale": True,
             "baseline_only": True,
+            "recovered_from_last_good": False,
+            "integrity_error": integrity_error,
         }
 
     age_seconds = 0
@@ -301,4 +447,6 @@ def index_status(path: Path | None = None) -> dict[str, Any]:
         "baseline_only": all(a.source == "baseline" for a in index.apps.values()),
         "labels_count": len(index.labels),
         "cef_field_count": len(index.cef_fields),
+        "recovered_from_last_good": recovered,
+        "integrity_error": integrity_error,
     }

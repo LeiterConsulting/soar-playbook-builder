@@ -15,8 +15,9 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import urllib.error
-import urllib.request
+from pathlib import Path
 from typing import Any
 
 import phantom.app as phantom
@@ -24,6 +25,7 @@ from phantom.action_result import ActionResult
 from phantom.base_connector import BaseConnector
 from soar_rest import build_phantom_rest_url
 
+from action_policy import evaluate_action_request
 from builder_helpers import (
     analyze_playbook,
     builder_steps_payload,
@@ -31,8 +33,24 @@ from builder_helpers import (
     preview_blocks_from_source,
     scaffold_pattern,
 )
+from bridge_transport import (
+    BridgePolicyError,
+    BridgeResponseTooLargeError,
+    bridge_request_json,
+    bridge_request_text,
+    validate_bridge_base_url,
+)
 from capability.index import build_index, index_status
+from html_template import render_html_template
 from preview_visual import attach_visual_preview, soar_playbook_links
+from public_response import sanitize_public_payload
+from request_policy import (
+    RequestPolicyError,
+    chat_get_is_allowed,
+    parse_json_post,
+    route_method_is_allowed,
+)
+from response_security import apply_security_headers
 from sidecar_url import append_query as _append_query
 from sidecar_url import build_sidecar_query_params as _build_sidecar_query_params
 from troubleshooting_catalog import attach_troubleshooting, troubleshooting_api_payload
@@ -41,9 +59,32 @@ APP_SUCCESS = phantom.APP_SUCCESS
 APP_ERROR = phantom.APP_ERROR
 
 _SNAPSHOTS = {}
-_DRAFT_CACHE: dict[str, dict[str, str]] = {}
 
 LESSON_INDEX = []  # legacy; use tutor_local.list_lessons_payload()
+
+
+def _config_bool(value: Any, *, default: bool = False) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _audit_action_request(request: Any, action: str | None) -> None:
+    """Record privacy-safe action policy evidence in the protected app log."""
+    decision = evaluate_action_request(request, action)
+    try:
+        request._pb_action_policy = decision.to_dict()  # noqa: SLF001
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        phantom.debug(
+            "playbook_builder_action_policy "
+            + json.dumps(decision.to_dict(), sort_keys=True)
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _apps_from_rest_response(resp):
@@ -92,9 +133,12 @@ class PlaybookBuilderConnector(BaseConnector):
     """Playbook Builder connector — MCP bridge test and sidecar URL."""
 
     def initialize(self):
-        self._mcp_bridge_url = self.get_config().get(
-            "mcp_bridge_url", "http://localhost:8003/agent"
-        ).rstrip("/")
+        self._mcp_bridge_url = str(
+            self.get_config().get("mcp_bridge_url") or ""
+        ).strip().rstrip("/")
+        self._mcp_bridge_allow_insecure_http = _config_bool(
+            self.get_config().get("mcp_bridge_allow_insecure_http")
+        )
         self._ai_instructions = self.get_config().get(
             "ai_instructions",
             "Describe playbooks in plain language — preview, validate, and import into SOAR",
@@ -117,19 +161,35 @@ class PlaybookBuilderConnector(BaseConnector):
     def _handle_test_connectivity(self, param, action_result):
         self.save_progress("Testing MCP bridge")
 
-        health_url = f"{self._mcp_bridge_url}/../health"
-        if self._mcp_bridge_url.endswith("/agent"):
-            health_url = self._mcp_bridge_url.rsplit("/agent", 1)[0] + "/agent/health"
+        if not self._mcp_bridge_url:
+            sidecar = _append_query(
+                f"{self._sidecar_base_url()}/chat",
+                _build_sidecar_query_params(param),
+            )
+            action_result.update_data(
+                [
+                    {
+                        "bridge_configured": False,
+                        "sidecar_url": sidecar,
+                        "mode": "templates_only",
+                    }
+                ]
+            )
+            return action_result.set_status(
+                APP_SUCCESS,
+                f"Templates-only Mode A is ready. Sidecar: {sidecar}",
+            )
 
-        try:
-            req = urllib.request.Request(health_url, method="GET")
-            with urllib.request.urlopen(req, timeout=15) as resp:  # nosec B310
-                body = resp.read().decode("utf-8", errors="replace")
+        probe = _probe_mcp_bridge(
+            self._mcp_bridge_url,
+            allow_insecure_http=self._mcp_bridge_allow_insecure_http,
+        )
+        if probe.get("reachable"):
             sidecar = _append_query(f"{self._sidecar_base_url()}/chat", _build_sidecar_query_params(param))
             action_result.update_data(
                 [
                     {
-                        "bridge_health": body[:500],
+                        "bridge_health": probe,
                         "sidecar_url": sidecar,
                         "mcp_bridge_url": self._mcp_bridge_url,
                     }
@@ -139,11 +199,11 @@ class PlaybookBuilderConnector(BaseConnector):
                 APP_SUCCESS,
                 f"MCP bridge reachable. Sidecar: {sidecar}",
             )
-        except Exception as exc:  # noqa: BLE001
-            return action_result.set_status(
-                APP_ERROR,
-                f"MCP bridge unreachable at {self._mcp_bridge_url}: {exc}",
-            )
+        action_result.update_data([probe])
+        return action_result.set_status(
+            APP_ERROR,
+            probe.get("error") or "MCP bridge is not reachable under the configured policy.",
+        )
 
     def _handle_get_sidecar_url(self, param, action_result):
         base = self._sidecar_base_url()
@@ -227,10 +287,9 @@ class PlaybookBuilderConnector(BaseConnector):
         try:
             from asset_config import export_asset_config_payload
 
-            include_secrets = str(param.get("include_secrets") or "").lower() in ("1", "true", "yes")
             cfg = dict(self.get_config() or {})
             sidecar = _append_query(f"{self._sidecar_base_url()}/chat", _build_sidecar_query_params(param))
-            payload = export_asset_config_payload(cfg, include_secrets=include_secrets, sidecar_url=sidecar)
+            payload = export_asset_config_payload(cfg, sidecar_url=sidecar)
             action_result.update_data([payload])
             return action_result.set_status(APP_SUCCESS, payload.get("message", "Exported"))
         except Exception as exc:  # noqa: BLE001
@@ -266,7 +325,13 @@ class PlaybookBuilderConnector(BaseConnector):
             from self_test import run_self_test
 
             cfg = dict(self.get_config() or {})
-            payload = run_self_test(cfg, bridge_probe=lambda: _probe_mcp_bridge(self._mcp_bridge_url))
+            probe_fn = None
+            if self._mcp_bridge_url:
+                probe_fn = lambda: _probe_mcp_bridge(  # noqa: E731
+                    self._mcp_bridge_url,
+                    allow_insecure_http=self._mcp_bridge_allow_insecure_http,
+                )
+            payload = run_self_test(cfg, bridge_probe=probe_fn)
             action_result.update_data([payload])
             if payload.get("blocking"):
                 return action_result.set_status(APP_SUCCESS, payload.get("message", "Self-test needs attention"))
@@ -276,15 +341,8 @@ class PlaybookBuilderConnector(BaseConnector):
 
 
 def _render_template(name: str, **replacements: str) -> str:
-    base = os.path.join(os.path.dirname(__file__), "widgets", name)
-    try:
-        with open(base, encoding="utf-8") as fh:
-            text = fh.read()
-    except OSError:
-        return f"<html><body>Missing template: {name}</body></html>"
-    for key, val in replacements.items():
-        text = text.replace("{{" + key + "}}", val or "")
-    return text
+    template_dir = Path(__file__).resolve().parent / "widgets"
+    return render_html_template(template_dir, name, replacements)
 
 
 def _fingerprint_playbook(playbook_id):
@@ -408,92 +466,16 @@ def _soar_base_url(request):
         return ""
 
 
-def _draft_cache_key(request):
-    """Draft cache is independent of ?playbook_id= (that param is legacy context only)."""
-    return request.GET.get("draft_key") or "builder"
-
-
 def _clean_playbook_name(name: str) -> str:
     return re.sub(r"\s*\((offline|stub)\)\s*$", "", name or "", flags=re.IGNORECASE).strip()
 
 
-def _cache_draft_from_request(request, payload):
-    if not isinstance(payload, dict) or not payload.get("source"):
-        return
-    name = _clean_playbook_name(
-        payload.get("pattern_label")
-        or payload.get("playbook_name")
-        or "NL Draft Playbook"
-    )
-    key = _draft_cache_key(request)
-    entry = _DRAFT_CACHE.setdefault(key, {})
-    entry.update(
-        {
-            "source": payload["source"],
-            "name": name,
-            "pattern": payload.get("pattern") or "",
-        }
-    )
-
-
-def _sync_draft_to_soar(request, payload):
-    """Auto-import NL draft so Open Playbook / VPE target the built workflow."""
-    if payload.get("status") == "error" or not payload.get("source"):
-        return payload
-    if payload.get("playbook_id"):
-        return payload
-
-    try:
-        key = _draft_cache_key(request)
-        source_hash = hashlib.sha256(payload["source"].encode()).hexdigest()
-        cached = _DRAFT_CACHE.get(key, {})
-        if cached.get("imported_hash") == source_hash and cached.get("imported_playbook_id"):
-            payload["playbook_id"] = cached["imported_playbook_id"]
-            payload["playbook_name"] = cached.get("imported_playbook_name") or cached.get("name")
-            payload["auto_imported"] = True
-            return payload
-
-        from draft_import import import_nl_draft
-
-        name = cached.get("name") or _clean_playbook_name(payload.get("pattern_label") or "NL Draft Playbook")
-        imported = import_nl_draft(
-            payload["source"],
-            name,
-            cached.get("pattern") or payload.get("pattern") or None,
-        )
-        if imported.get("status") != "success" or not imported.get("playbook_id"):
-            payload["import_error"] = imported.get("error", "Auto-import failed")
-            if imported.get("import_attempts"):
-                payload["import_error"] += "\n" + "\n".join(imported["import_attempts"])
-            return payload
-
-        pid = imported["playbook_id"]
-        cached["imported_playbook_id"] = pid
-        cached["imported_hash"] = source_hash
-        cached["imported_playbook_name"] = name
-        payload["playbook_id"] = pid
-        payload["playbook_name"] = name
-        payload["auto_imported"] = True
-        note = f"\n\n_Synced to SOAR as **{name}** (id **{pid}**). Open Visual Editor opens this playbook._"
-        if payload.get("content"):
-            if "Synced to SOAR" not in payload["content"]:
-                payload["content"] = str(payload["content"]) + note
-        else:
-            payload["content"] = imported.get("content") or note.strip()
-    except Exception as exc:  # noqa: BLE001
-        payload["import_error"] = f"Auto-import failed: {exc}"
-    return payload
-
-
-def _enrich_builder_payload(request, payload, *, auto_import=False):
+def _enrich_builder_payload(request, payload):
     if not isinstance(payload, dict) or payload.get("status") == "error":
         return payload
     base = _soar_base_url(request)
 
     if payload.get("source") and _is_python_source(payload.get("source")):
-        _cache_draft_from_request(request, payload)
-        if auto_import:
-            payload = _sync_draft_to_soar(request, payload)
         payload = attach_visual_preview(payload, base_url=base)
         payload["draft_ready"] = True
         try:
@@ -537,25 +519,44 @@ def _enrich_builder_payload(request, payload, *, auto_import=False):
 def _finalize_chat_payload(payload: Any) -> dict[str, Any]:
     """Attach troubleshooting hints to error and blocked-import payloads."""
     if not isinstance(payload, dict):
-        return attach_troubleshooting({"status": "error", "error": str(payload)})
-    return attach_troubleshooting(payload)
+        payload = {
+            "status": "error",
+            "error_code": "INVALID_HANDLER_RESPONSE",
+            "error": "The builder returned an invalid response.",
+        }
+    return sanitize_public_payload(attach_troubleshooting(payload))
 
 
-def _safe_enrich_builder_payload(request, payload, *, auto_import=False):
+def _internal_error_payload(code: str, message: str, exc: Exception) -> dict[str, Any]:
+    """Log a non-sensitive diagnostic reference and return a stable public error."""
+    correlation_id = secrets.token_hex(6)
+    try:
+        phantom.debug(
+            "PlaybookBuilder internal error "
+            f"code={code} correlation_id={correlation_id} type={type(exc).__name__}"
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return _finalize_chat_payload(
+        {
+            "status": "error",
+            "error_code": code,
+            "correlation_id": correlation_id,
+            "error": message,
+        }
+    )
+
+
+def _safe_enrich_builder_payload(request, payload):
     """Enrich preview; never raise — return error payload instead."""
     try:
-        enriched = _enrich_builder_payload(request, payload, auto_import=auto_import)
+        enriched = _enrich_builder_payload(request, payload)
         return _finalize_chat_payload(enriched)
     except Exception as exc:  # noqa: BLE001
-        import traceback
-
-        return _finalize_chat_payload(
-            {
-                "status": "error",
-                "error": f"Preview enrichment failed: {exc}",
-                "traceback": traceback.format_exc()[-800:],
-                "source": (payload or {}).get("source") if isinstance(payload, dict) else None,
-            }
+        return _internal_error_payload(
+            "PREVIEW_ENRICHMENT_FAILED",
+            "Preview enrichment failed. Check the SOAR app logs using the correlation ID.",
+            exc,
         )
 
 
@@ -632,16 +633,15 @@ def _parse_asset_map(raw: Any) -> dict[str, str]:
 
 
 def _handle_import_draft(request, payload=None):
-    """Import NL draft — source may come from POST body (preferred) or server cache."""
+    """Import an explicitly submitted draft through the JSON POST API."""
     payload = payload or {}
-    if payload.get("confirm") not in (True, 1, "1", "true"):
-        if request.GET.get("confirm") != "1" and str(payload.get("confirm", "")).lower() not in {"1", "true"}:
-            return {
-                "status": "error",
-                "error": "Import requires confirm=1 (use Import to SOAR button).",
-            }
+    if str(payload.get("confirm", "")).lower() not in {"1", "true"}:
+        return {
+            "status": "error",
+            "error": "Import requires confirm=1 (use Import to SOAR button).",
+        }
 
-    pattern = payload.get("pattern") or request.GET.get("pattern")
+    pattern = payload.get("pattern")
     from pattern_catalog import pattern_meta
 
     org = getattr(request, "_pb_org_registry", None)
@@ -664,33 +664,18 @@ def _handle_import_draft(request, payload=None):
                 "destructive_actions": meta.get("destructive_actions") or [],
             }
 
-    source = (payload.get("source") or request.GET.get("source") or "").strip()
+    source = (payload.get("source") or "").strip()
     name = _clean_playbook_name(
         payload.get("name")
         or payload.get("pattern_label")
-        or request.GET.get("name")
         or "NL Draft Playbook"
     )
-
-    draft = _DRAFT_CACHE.get(_draft_cache_key(request), {})
-    if not source and draft.get("source"):
-        source = draft["source"]
-    if name == "NL Draft Playbook" and draft.get("name"):
-        name = draft["name"]
-    if not pattern and draft.get("pattern"):
-        pattern = draft.get("pattern")
 
     if not source:
         return {
             "status": "error",
-            "error": "No draft to import. Build or generate a playbook first.",
+            "error": "No source was submitted. Build or generate a playbook first.",
         }
-
-    _DRAFT_CACHE[_draft_cache_key(request)] = {
-        "source": source,
-        "name": name,
-        "pattern": pattern or "",
-    }
 
     from draft_import import import_nl_draft
 
@@ -709,19 +694,15 @@ def _handle_import_draft(request, payload=None):
         asset_defaults=asset_defaults,
     )
     if imported.get("status") == "success" and imported.get("playbook_id"):
-        key = _draft_cache_key(request)
-        cached = _DRAFT_CACHE.setdefault(key, {})
-        cached["imported_playbook_id"] = imported["playbook_id"]
-        cached["imported_hash"] = hashlib.sha256(source.encode()).hexdigest()
-        cached["imported_playbook_name"] = (
+        imported_name = (
             imported.get("playbook_display_name")
             or imported.get("playbook_name")
             or name
         )
         imported["playbook_display_name"] = (
-            imported.get("playbook_display_name") or cached["imported_playbook_name"]
+            imported.get("playbook_display_name") or imported_name
         )
-        imported["playbook_name"] = cached["imported_playbook_name"]
+        imported["playbook_name"] = imported_name
         imported["draft_ready"] = True
     if imported.get("status") == "success":
         from builder_helpers import analyze_playbook, preview_blocks_from_source
@@ -740,11 +721,58 @@ def _chat_param(request, post_body, key, default=None):
     return request.GET.get(key, default)
 
 
+def _trusted_review_index(evaluated_at: str):
+    """Load persisted evidence or a fail-closed, baseline-only review index."""
+    from capability.index import (
+        load_baseline_apps,
+        load_baseline_cef,
+        load_index,
+    )
+    from capability.schema import CapabilityIndex
+
+    index = load_index()
+    if index is not None:
+        return index
+    return CapabilityIndex(
+        index_version="offline-baseline-unverified-v1",
+        built_at=evaluated_at,
+        harvest_status="failed",
+        harvest_errors=[
+            "No persisted capability index; baseline is not installation evidence"
+        ],
+        apps=load_baseline_apps(),
+        cef_fields=load_baseline_cef(),
+        labels=["events", "investigation"],
+        severities=["low", "medium", "high", "critical"],
+        statuses=["new", "open", "closed"],
+    )
+
+
+def _trusted_review_context(
+    operating_mode: Any,
+    evaluated_at: str,
+    *,
+    origin: str,
+):
+    from trusted_review import ReviewContext
+
+    return ReviewContext(
+        operating_mode=str(operating_mode or "air_gapped"),
+        evaluated_at=evaluated_at,
+        generated_at=evaluated_at,
+        origin=origin,
+    )
+
+
 def _handle_chat_api(request, cfg, post_body=None):
     """GET /chat?... or POST {action: chat, message: ...} — builder + tutor API."""
     post_body = post_body or {}
     org = getattr(request, "_pb_org_registry", None)
     action = (_chat_param(request, post_body, "action") or "").strip().lower()
+    _audit_action_request(request, action or "assistant_message")
+    allow_insecure_bridge = _config_bool(
+        cfg.get("mcp_bridge_allow_insecure_http")
+    )
 
     if action == "links":
         pb = _chat_param(request, post_body, "playbook_id")
@@ -755,8 +783,16 @@ def _handle_chat_api(request, cfg, post_body=None):
         }
 
     if action == "bridge_status":
-        probe = _probe_mcp_bridge(cfg["mcp_bridge_url"])
-        if not probe.get("reachable"):
+        probe = _probe_mcp_bridge(
+            cfg["mcp_bridge_url"],
+            allow_insecure_http=allow_insecure_bridge,
+        )
+        if probe.get("configured") is False:
+            probe["hint"] = (
+                "Templates-only Mode A is active. Configure mcp_bridge_url only when "
+                "the SOAR host can securely reach your Mode B bridge."
+            )
+        elif not probe.get("reachable"):
             probe["hint"] = (
                 "SOAR must reach the MCP agent bridge from this server — verify "
                 f"{probe['health_url']} from the SOAR host (not only from your workstation)."
@@ -781,18 +817,17 @@ def _handle_chat_api(request, cfg, post_body=None):
             "pattern": _chat_param(request, post_body, "pattern"),
             "asset_map": _chat_param(request, post_body, "asset_map"),
         }
-        return _safe_enrich_builder_payload(
-            request, _handle_import_draft(request, body), auto_import=False
-        )
+        return _safe_enrich_builder_payload(request, _handle_import_draft(request, body))
 
     if action == "readiness_check":
         source = (_chat_param(request, post_body, "source") or "").strip()
-        draft = _DRAFT_CACHE.get(_draft_cache_key(request), {})
-        if not source and draft.get("source"):
-            source = draft["source"]
         if not source:
             return _finalize_chat_payload(
-                {"status": "error", "error": "No draft to check. Build a playbook first."}
+                {
+                    "status": "error",
+                    "error_code": "SOURCE_REQUIRED",
+                    "error": "No source was submitted. Build a playbook first.",
+                }
             )
         from playbook_readiness import readiness_payload_from_source
 
@@ -817,20 +852,20 @@ def _handle_chat_api(request, cfg, post_body=None):
                 _chat_context_from_request(request),
                 payload["source"],
                 cfg["mcp_bridge_url"],
+                allow_insecure_http=allow_insecure_bridge,
             )
-        return _safe_enrich_builder_payload(request, payload, auto_import=False)
+        return _safe_enrich_builder_payload(request, payload)
 
     if action == "preflight_import":
         source = (_chat_param(request, post_body, "source") or "").strip()
         pattern = _chat_param(request, post_body, "pattern")
-        draft = _DRAFT_CACHE.get(_draft_cache_key(request), {})
-        if not source and draft.get("source"):
-            source = draft["source"]
-        if not pattern and draft.get("pattern"):
-            pattern = draft.get("pattern")
         if not source:
             return _finalize_chat_payload(
-                {"status": "error", "error": "No draft to check. Build a playbook first."}
+                {
+                    "status": "error",
+                    "error_code": "SOURCE_REQUIRED",
+                    "error": "No source was submitted. Build a playbook first.",
+                }
             )
         from asset_resolver import build_asset_preflight, parse_asset_defaults, preflight_message
 
@@ -856,23 +891,15 @@ def _handle_chat_api(request, cfg, post_body=None):
         }
 
     if action == "migrate_python39":
-        confirm = _chat_param(request, post_body, "confirm")
-        if confirm not in (True, 1, "1", "true"):
-            from python39_upgrade import migrate_all_legacy_playbooks
-
-            preview = migrate_all_legacy_playbooks(request, dry_run=True)
-            preview["hint"] = "Pass confirm=1 to upgrade all Python 2.7 playbooks in local repo."
-            return preview
-        from python39_upgrade import migrate_all_legacy_playbooks
-
-        slugs_raw = _chat_param(request, post_body, "slugs") or _chat_param(request, post_body, "slug")
-        slugs = None
-        if slugs_raw:
-            if isinstance(slugs_raw, list):
-                slugs = [str(s) for s in slugs_raw]
-            else:
-                slugs = [s.strip() for s in str(slugs_raw).split(",") if s.strip()]
-        return migrate_all_legacy_playbooks(request, slugs=slugs, dry_run=False)
+        return {
+            "status": "error",
+            "error_code": "LEGACY_PYTHON_MIGRATION_UNSUPPORTED",
+            "error": (
+                "Python 2 migration is outside this app's SOAR 8.5 / "
+                "Python 3.13 support boundary. Use Splunk's platform "
+                "upgrade workflow before importing with Playbook Builder."
+            ),
+        }
 
     if action == "steps":
         return builder_steps_payload()
@@ -881,6 +908,142 @@ def _handle_chat_api(request, cfg, post_body=None):
         from pattern_catalog import list_patterns_payload
 
         return list_patterns_payload(org_registry=org)
+
+    if action == "list_ir_templates":
+        from trusted_review import list_templates
+
+        raw_limit = _chat_param(request, post_body, "limit", "32")
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError):
+            limit = 32
+        try:
+            return list_templates(
+                str(_chat_param(request, post_body, "q", "") or ""),
+                limit=limit,
+            )
+        except ValueError:
+            return {
+                "status": "error",
+                "error_code": "REVIEW_INPUT_INVALID",
+                "error": "IR template query or limit is invalid.",
+                "review_only": True,
+                "import_enabled": False,
+            }
+
+    if action == "trusted_retrieve":
+        from trusted_review import retrieve_candidates
+
+        query = str(
+            _chat_param(request, post_body, "q")
+            or _chat_param(request, post_body, "query")
+            or ""
+        )
+        try:
+            action_limit = int(
+                _chat_param(request, post_body, "action_limit", "12")
+            )
+            template_limit = int(
+                _chat_param(request, post_body, "template_limit", "3")
+            )
+            from datetime import datetime, timezone
+
+            evaluated_at = datetime.now(timezone.utc).replace(
+                microsecond=0
+            ).isoformat()
+            return retrieve_candidates(
+                query,
+                _trusted_review_index(evaluated_at),
+                action_limit=action_limit,
+                template_limit=template_limit,
+            )
+        except ValueError:
+            return {
+                "status": "error",
+                "error_code": "RETRIEVAL_INPUT_INVALID",
+                "error": "Retrieval query or result limits are invalid.",
+                "review_only": True,
+                "import_enabled": False,
+            }
+
+    if action in ("trusted_ir_template_review", "trusted_ir_review"):
+        from datetime import datetime, timezone
+
+        from trusted_review import review_ir_document, review_template
+
+        evaluated_at = datetime.now(timezone.utc).replace(
+            microsecond=0
+        ).isoformat()
+        index = _trusted_review_index(evaluated_at)
+        operating_mode = _chat_param(
+            request,
+            post_body,
+            "operating_mode",
+            "air_gapped",
+        )
+        asset_bindings = _chat_param(
+            request,
+            post_body,
+            "asset_bindings",
+        )
+        try:
+            if action == "trusted_ir_template_review":
+                template_id = str(
+                    _chat_param(
+                        request,
+                        post_body,
+                        "template_id",
+                        "",
+                    )
+                )
+                org_ir = org.ir_for(template_id) if org else None
+                if org_ir is not None:
+                    reviewed = review_ir_document(
+                        org_ir.to_dict(),
+                        index,
+                        context=_trusted_review_context(
+                            operating_mode,
+                            evaluated_at,
+                            origin="template",
+                        ),
+                        asset_bindings=asset_bindings,
+                    )
+                    if reviewed.get("status") == "success":
+                        reviewed["template"] = {
+                            "id": template_id,
+                            "source_sha256": org_ir.sha256(),
+                            "source_path": "asset:custom_ir_templates_json",
+                        }
+                    return reviewed
+                return review_template(
+                    template_id,
+                    index,
+                    context=_trusted_review_context(
+                        operating_mode,
+                        evaluated_at,
+                        origin="template",
+                    ),
+                    asset_bindings=asset_bindings,
+                )
+            document = _chat_param(request, post_body, "ir")
+            return review_ir_document(
+                document,
+                index,
+                context=_trusted_review_context(
+                    operating_mode,
+                    evaluated_at,
+                    origin="manual",
+                ),
+                asset_bindings=asset_bindings,
+            )
+        except ValueError:
+            return {
+                "status": "error",
+                "error_code": "REVIEW_INPUT_INVALID",
+                "error": "Trusted IR review input is invalid.",
+                "review_only": True,
+                "import_enabled": False,
+            }
 
     if action == "template_manifest":
         from template_manifest import build_template_manifest
@@ -954,13 +1117,12 @@ def _handle_chat_api(request, cfg, post_body=None):
     if action == "export_asset_config":
         from asset_config import export_asset_config_payload
 
-        include_secrets = _chat_param(request, post_body, "include_secrets") in (True, 1, "1", "true")
         base = ""
         try:
             base = phantom.get_base_url().rstrip("/")
         except Exception:  # noqa: BLE001
             pass
-        return export_asset_config_payload(cfg, include_secrets=bool(include_secrets), sidecar_url=base)
+        return export_asset_config_payload(cfg, sidecar_url=base)
 
     if action == "import_asset_config":
         from asset_config import import_asset_config_payload
@@ -988,7 +1150,10 @@ def _handle_chat_api(request, cfg, post_body=None):
         bridge_url = (cfg.get("mcp_bridge_url") or "").strip()
         probe_fn = None
         if bridge_url:
-            probe_fn = lambda: _probe_mcp_bridge(bridge_url)  # noqa: E731
+            probe_fn = lambda: _probe_mcp_bridge(  # noqa: E731
+                bridge_url,
+                allow_insecure_http=allow_insecure_bridge,
+            )
         payload = run_self_test(cfg, bridge_probe=probe_fn)
         return payload
 
@@ -1077,27 +1242,25 @@ def _handle_chat_api(request, cfg, post_body=None):
                 _chat_context_from_request(request),
                 result["source"],
                 cfg["mcp_bridge_url"],
+                allow_insecure_http=allow_insecure_bridge,
             )
-        return _safe_enrich_builder_payload(request, result, auto_import=False)
+        return _safe_enrich_builder_payload(request, result)
 
     if action == "preview":
         pattern = _chat_param(request, post_body, "pattern")
         if pattern:
             return _safe_enrich_builder_payload(
-                request, scaffold_pattern(pattern, org_registry=org), auto_import=False
+                request, scaffold_pattern(pattern, org_registry=org)
             )
         pb = _chat_param(request, post_body, "playbook_id")
         if pb:
-            return _safe_enrich_builder_payload(
-                request, _live_playbook_preview(pb), auto_import=False
-            )
+            return _safe_enrich_builder_payload(request, _live_playbook_preview(pb))
         return {"status": "error", "error": "Provide pattern or playbook_id"}
 
     if action == "validate":
         return _safe_enrich_builder_payload(
             request,
             _validate_pattern(_chat_param(request, post_body, "pattern", "hello"), org_registry=org),
-            auto_import=False,
         )
 
     if _chat_param(request, post_body, "poll"):
@@ -1118,8 +1281,7 @@ def _handle_chat_api(request, cfg, post_body=None):
         return _finalize_chat_payload(tutor_payload)
 
     if lower.startswith("review") and "playbook" in lower:
-        draft = _DRAFT_CACHE.get(_draft_cache_key(request), {})
-        source = (draft.get("source") or "").strip()
+        source = (_chat_param(request, post_body, "source") or "").strip()
         if source:
             from builder_helpers import analyze_playbook
 
@@ -1138,25 +1300,35 @@ def _handle_chat_api(request, cfg, post_body=None):
             return _finalize_chat_payload(
                 {"status": "success", "content": "\n".join(lines), "coach_lane": "review", "analysis": analysis}
             )
+        return _finalize_chat_payload(
+            {
+                "status": "error",
+                "error_code": "SOURCE_REQUIRED",
+                "error": "Submit the current playbook source to review it.",
+            }
+        )
 
     if lower in ("validate current preview", "validate preview"):
         return _safe_enrich_builder_payload(
             request,
             _validate_pattern(_chat_param(request, post_body, "pattern", "hello"), org_registry=org),
-            auto_import=False,
         )
 
     pattern = parse_builder_action(message)
     if pattern:
-        return _safe_enrich_builder_payload(
-            request, scaffold_pattern(pattern, org_registry=org), auto_import=False
-        )
+        return _safe_enrich_builder_payload(request, scaffold_pattern(pattern, org_registry=org))
 
     # Keyword templates when MCP bridge is offline — custom prompts defer to bridge/LLM.
     from builder_helpers import SCAFFOLDS
     from local_nl_build import is_build_intent, match_pattern, should_defer_to_llm, try_local_build
 
-    bridge_reachable = _probe_mcp_bridge(cfg["mcp_bridge_url"]).get("reachable") is True
+    bridge_reachable = (
+        _probe_mcp_bridge(
+            cfg["mcp_bridge_url"],
+            allow_insecure_http=allow_insecure_bridge,
+        ).get("reachable")
+        is True
+    )
 
     if (
         is_build_intent(message)
@@ -1172,18 +1344,21 @@ def _handle_chat_api(request, cfg, post_body=None):
             return _safe_enrich_builder_payload(
                 request,
                 scaffold_pattern(local_pattern, org_registry=org),
-                auto_import=False,
             )
 
     body = {"message": message, "context": _chat_context_from_request(request)}
-    bridged = _proxy_chat_to_bridge(body, cfg["mcp_bridge_url"])
+    bridged = _proxy_chat_to_bridge(
+        body,
+        cfg["mcp_bridge_url"],
+        allow_insecure_http=allow_insecure_bridge,
+    )
     if not _has_builder_payload(bridged):
         bridge_err = bridged.get("error") if bridged.get("status") == "error" else (
             "MCP bridge returned an empty response — verify bridge health from the SOAR server."
         )
         local = try_local_build(message, bridge_error=bridge_err, org_registry=org)
         if local:
-            return _safe_enrich_builder_payload(request, local, auto_import=False)
+            return _safe_enrich_builder_payload(request, local)
         if bridged.get("status") == "error":
             return _finalize_chat_payload(bridged)
         return _finalize_chat_payload(
@@ -1192,23 +1367,28 @@ def _handle_chat_api(request, cfg, post_body=None):
                 "error": bridge_err or "Builder returned no preview or message.",
             }
         )
-    return _safe_enrich_builder_payload(request, bridged, auto_import=False)
+    return _safe_enrich_builder_payload(request, bridged)
 
 
-def _proxy_cache_draft(context, source, mcp_bridge_url):
+def _proxy_cache_draft(
+    context,
+    source,
+    mcp_bridge_url,
+    *,
+    allow_insecure_http: bool = False,
+):
     """Best-effort seed of bridge draft cache after local scaffold."""
-    bridge = mcp_bridge_url.rstrip("/")
-    url = f"{bridge}/api/draft"
-    payload = json.dumps({"context": context, "source": source}).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    if not str(mcp_bridge_url or "").strip():
+        return
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:  # nosec B310
-            json.loads(resp.read().decode("utf-8"))
+        bridge_request_json(
+            mcp_bridge_url,
+            "api/draft",
+            method="POST",
+            payload={"context": context, "source": source},
+            timeout=5,
+            allow_insecure_http=allow_insecure_http,
+        )
     except Exception:  # noqa: BLE001
         pass
 
@@ -1220,21 +1400,51 @@ def _bridge_health_url(mcp_bridge_url: str) -> str:
     return f"{bridge}/health"
 
 
-def _probe_mcp_bridge(mcp_bridge_url: str) -> dict:
+def _probe_mcp_bridge(
+    mcp_bridge_url: str,
+    *,
+    allow_insecure_http: bool = False,
+) -> dict:
     """Check reachability from the SOAR app process (same path as chat proxy)."""
-    health_url = _bridge_health_url(mcp_bridge_url)
-    chat_url = f"{mcp_bridge_url.rstrip('/')}/api/chat"
+    if not str(mcp_bridge_url or "").strip():
+        return {
+            "status": "success",
+            "configured": False,
+            "reachable": False,
+            "llm_configured": False,
+            "mode": "templates_only",
+            "hint": "MCP bridge is optional and is not configured (Mode A).",
+        }
+    try:
+        normalized = validate_bridge_base_url(
+            mcp_bridge_url,
+            allow_insecure_http=allow_insecure_http,
+        )
+    except BridgePolicyError as exc:
+        return {
+            "status": "error",
+            "error_code": "MCP_BRIDGE_POLICY_REJECTED",
+            "configured": True,
+            "reachable": False,
+            "llm_configured": False,
+            "error": str(exc),
+        }
+    health_url = _bridge_health_url(normalized)
+    chat_url = f"{normalized}/api/chat"
     result = {
-        "mcp_bridge_url": mcp_bridge_url,
+        "mcp_bridge_url": normalized,
         "health_url": health_url,
         "chat_url": chat_url,
+        "configured": True,
     }
     try:
-        req = urllib.request.Request(health_url, method="GET")
-        with urllib.request.urlopen(req, timeout=12) as resp:  # nosec B310
-            body = resp.read().decode("utf-8", errors="replace")
+        body = bridge_request_text(
+            normalized,
+            "health",
+            timeout=12,
+            allow_insecure_http=allow_insecure_http,
+        )
         result["reachable"] = True
-        result["health"] = body[:500]
         result["status"] = "success"
         try:
             health_json = json.loads(body)
@@ -1256,47 +1466,87 @@ def _probe_mcp_bridge(mcp_bridge_url: str) -> dict:
             result["llm_hint"] = (
                 "Bridge health did not report LLM status — update MCP bridge to latest version."
             )
-    except Exception as exc:  # noqa: BLE001
+    except BridgePolicyError as exc:
         result["reachable"] = False
         result["status"] = "error"
+        result["error_code"] = "MCP_BRIDGE_POLICY_REJECTED"
         result["error"] = str(exc)
+        result["llm_configured"] = False
+    except BridgeResponseTooLargeError:
+        result["reachable"] = False
+        result["status"] = "error"
+        result["error_code"] = "MCP_BRIDGE_RESPONSE_TOO_LARGE"
+        result["error"] = "MCP bridge health response exceeded the byte limit."
+        result["llm_configured"] = False
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
+        result["reachable"] = False
+        result["status"] = "error"
+        result["error_code"] = "MCP_BRIDGE_UNREACHABLE"
+        result["error"] = "MCP bridge health check failed under the configured network policy."
+        result["llm_configured"] = False
+    except Exception:  # noqa: BLE001
+        result["reachable"] = False
+        result["status"] = "error"
+        result["error_code"] = "MCP_BRIDGE_HEALTH_ERROR"
+        result["error"] = "MCP bridge health response was invalid."
         result["llm_configured"] = False
     return result
 
 
-def _proxy_chat_to_bridge(body, mcp_bridge_url):
-    bridge = mcp_bridge_url.rstrip("/")
-    url = f"{bridge}/api/chat"
-    payload = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+def _proxy_chat_to_bridge(
+    body,
+    mcp_bridge_url,
+    *,
+    allow_insecure_http: bool = False,
+):
+    if not str(mcp_bridge_url or "").strip():
+        return {
+            "status": "error",
+            "error_code": "MCP_BRIDGE_NOT_CONFIGURED",
+            "error": "AI mode is not configured. Use a built-in template or configure the MCP bridge.",
+        }
     try:
         # MCP cold start + Ollama NL can exceed 45s; align with sidecar POST timeout (90s).
-        with urllib.request.urlopen(req, timeout=120) as resp:  # nosec B310
-            return _normalize_bridge_response(json.loads(resp.read().decode("utf-8")))
+        return _normalize_bridge_response(
+            bridge_request_json(
+                mcp_bridge_url,
+                "api/chat",
+                method="POST",
+                payload=body,
+                timeout=120,
+                allow_insecure_http=allow_insecure_http,
+            )
+        )
+    except BridgePolicyError as exc:
+        return {
+            "status": "error",
+            "error_code": "MCP_BRIDGE_POLICY_REJECTED",
+            "error": str(exc),
+        }
+    except BridgeResponseTooLargeError:
+        return {
+            "status": "error",
+            "error_code": "MCP_BRIDGE_RESPONSE_TOO_LARGE",
+            "error": "The MCP bridge response exceeded the permitted size.",
+        }
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:300]
         return {
             "status": "error",
-            "error": f"MCP bridge HTTP {exc.code} at {url}: {detail or exc.reason}",
+            "error_code": "MCP_BRIDGE_HTTP_ERROR",
+            "http_status": exc.code,
+            "error": "The MCP bridge rejected the request. Check the protected bridge logs.",
         }
-    except urllib.error.URLError as exc:
-        health = _bridge_health_url(mcp_bridge_url)
+    except urllib.error.URLError:
         return {
             "status": "error",
-            "error": (
-                f"MCP bridge unreachable from SOAR at {url}: {exc}. "
-                f"On the SOAR host run: curl {health}"
-            ),
+            "error_code": "MCP_BRIDGE_UNREACHABLE",
+            "error": "The MCP bridge is unreachable from SOAR. Run the configured health check.",
         }
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         return {
             "status": "error",
-            "error": f"MCP bridge error at {url}: {exc}",
+            "error_code": "MCP_BRIDGE_ERROR",
+            "error": "The MCP bridge request failed. Check the protected SOAR app logs.",
         }
 
 
@@ -1305,6 +1555,8 @@ _STATIC_WIDGETS = {
     "playbook_builder.js": "application/javascript",
     "playbook_builder.css": "text/css",
     "playbook_builder_logo.png": "image/png",
+    "playbook_builder_widget.js": "application/javascript",
+    "playbook_builder_widget.css": "text/css",
 }
 
 
@@ -1317,8 +1569,12 @@ def _serve_static_widget(filename: str):
         with open(path, "rb") as fh:
             content = fh.read()
     except OSError:
-        return HttpResponse(f"Missing widget asset: {filename}", status=404)
-    return HttpResponse(content, content_type=_STATIC_WIDGETS[filename])
+        return apply_security_headers(
+            HttpResponse(f"Missing widget asset: {filename}", status=404)
+        )
+    return apply_security_headers(
+        HttpResponse(content, content_type=_STATIC_WIDGETS[filename])
+    )
 
 
 def _resolve_route(path_parts):
@@ -1388,13 +1644,26 @@ def _config_from_request(request, path_parts=None):
             if fetched:
                 asset = {**fetched, **asset}
     return {
-        "mcp_bridge_url": asset.get("mcp_bridge_url") or "http://localhost:8003/agent",
+        "mcp_bridge_url": (asset.get("mcp_bridge_url") or "").strip(),
+        "mcp_bridge_allow_insecure_http": _config_bool(
+            asset.get("mcp_bridge_allow_insecure_http")
+        ),
         "ai_instructions": asset.get("ai_instructions") or "SOAR Playbook Builder",
         "soar_rest_token": (asset.get("soar_rest_token") or "").strip(),
-        "phenv_use_sudo": asset.get("phenv_use_sudo", "true"),
-        "phenv_path": (asset.get("phenv_path") or "").strip(),
+        "soar_loopback_allow_insecure_tls": _config_bool(
+            asset.get("soar_loopback_allow_insecure_tls")
+        ),
+        "soar_loopback_ca_bundle": (
+            asset.get("soar_loopback_ca_bundle") or ""
+        ).strip(),
         "asset_defaults": (asset.get("asset_defaults") or "").strip(),
         "custom_templates_json": (asset.get("custom_templates_json") or "").strip(),
+        "custom_ir_templates_json": (
+            asset.get("custom_ir_templates_json") or ""
+        ).strip(),
+        "allow_legacy_python_templates": _config_bool(
+            asset.get("allow_legacy_python_templates")
+        ),
         "playbook_defaults_json": (asset.get("playbook_defaults_json") or "").strip(),
         "es_web_url": (asset.get("es_web_url") or "").strip(),
         "sample_cases_json": (asset.get("sample_cases_json") or "").strip(),
@@ -1441,74 +1710,117 @@ def handle_request(request, path_parts=None):
     """SOAR REST handler entry point."""
     from django.http import HttpResponse, JsonResponse
 
+    def _json(payload, *, status=200):
+        return apply_security_headers(JsonResponse(payload, status=status))
+
+    def _html(payload):
+        return apply_security_headers(
+            HttpResponse(payload, content_type="text/html"),
+            html_document=True,
+        )
+
     def _json_chat(payload):
-        return JsonResponse(_finalize_chat_payload(payload if isinstance(payload, dict) else {}))
+        return _json(
+            _finalize_chat_payload(payload if isinstance(payload, dict) else {})
+        )
+
+    def _json_post_body():
+        try:
+            return parse_json_post(request), None
+        except RequestPolicyError as exc:
+            return None, _json(exc.payload(), status=exc.status)
+
+    def _method_not_allowed():
+        return _json(
+            {
+                "status": "error",
+                "error_code": "METHOD_NOT_ALLOWED",
+                "error": "HTTP method is not allowed for this route.",
+            },
+            status=405,
+        )
 
     parts = path_parts or []
     route = _resolve_route(parts)
+    if route in _KNOWN_ROUTES and not route_method_is_allowed(route, request.method):
+        return _method_not_allowed()
+    if route in _STATIC_WIDGETS and request.method != "GET":
+        return _method_not_allowed()
     cfg = _config_from_request(request, path_parts)
     if cfg.get("soar_rest_token"):
         request._soar_rest_token = cfg["soar_rest_token"]  # noqa: SLF001
-    request._pb_config = cfg  # noqa: SLF001 — phenv_use_sudo / phenv_path for python39_upgrade
+    request._pb_config = cfg  # noqa: SLF001 — request-scoped app configuration
     from custom_templates import parse_org_templates
 
-    request._pb_org_registry = parse_org_templates(cfg.get("custom_templates_json"))  # noqa: SLF001
+    request._pb_org_registry = parse_org_templates(  # noqa: SLF001
+        cfg.get("custom_templates_json"),
+        raw_ir_config=cfg.get("custom_ir_templates_json"),
+        allow_legacy_python=_config_bool(
+            cfg.get("allow_legacy_python_templates")
+        ),
+    )
 
     if route in _STATIC_WIDGETS:
+        if request.method != "GET":
+            return _method_not_allowed()
         return _serve_static_widget(route)
 
     if route == "chat":
         if request.method == "POST":
-            try:
-                body = json.loads(request.body or "{}")
-            except json.JSONDecodeError:
-                body = {}
+            body, error_response = _json_post_body()
+            if error_response is not None:
+                return error_response
             action = (body.get("action") or "").strip().lower()
             if action == "import_draft":
+                _audit_action_request(request, action)
                 try:
                     payload = _safe_enrich_builder_payload(
-                        request, _handle_import_draft(request, body), auto_import=False
+                        request, _handle_import_draft(request, body)
                     )
                 except Exception as exc:  # noqa: BLE001
-                    import traceback
-
-                    payload = _finalize_chat_payload(
-                        {
-                            "status": "error",
-                            "error": f"Import failed: {exc}",
-                            "traceback": traceback.format_exc()[-800:],
-                        }
+                    payload = _internal_error_payload(
+                        "IMPORT_FAILED",
+                        "Import failed. Check the SOAR app logs using the correlation ID.",
+                        exc,
                     )
-                return JsonResponse(payload)
+                return _json(payload)
             try:
                 return _json_chat(_handle_chat_api(request, cfg, post_body=body))
             except Exception as exc:  # noqa: BLE001
-                import traceback
-
                 return _json_chat(
-                    {
-                        "status": "error",
-                        "error": f"Builder error: {exc}",
-                        "traceback": traceback.format_exc()[-800:],
-                    }
+                    _internal_error_payload(
+                        "BUILDER_REQUEST_FAILED",
+                        "The builder request failed. Check the SOAR app logs using the correlation ID.",
+                        exc,
+                    )
                 )
+
+        if request.method != "GET":
+            return _method_not_allowed()
 
         if request.method == "GET" and (
             request.GET.get("message")
             or request.GET.get("poll")
             or request.GET.get("action")
         ):
+            if not chat_get_is_allowed(request.GET):
+                return _json(
+                    {
+                        "status": "error",
+                        "error_code": "METHOD_NOT_ALLOWED",
+                        "error": "This operation requires a JSON POST request.",
+                    },
+                    status=405,
+                )
             try:
                 return _json_chat(_handle_chat_api(request, cfg))
             except Exception as exc:  # noqa: BLE001
-                import traceback
-
                 return _json_chat(
-                    {
-                        "status": "error",
-                        "error": f"Builder error: {exc}",
-                        "traceback": traceback.format_exc()[-800:],
-                    }
+                    _internal_error_payload(
+                        "BUILDER_REQUEST_FAILED",
+                        "The builder request failed. Check the SOAR app logs using the correlation ID.",
+                        exc,
+                    )
                 )
 
         html = _render_template(
@@ -1517,37 +1829,49 @@ def handle_request(request, path_parts=None):
             AI_INSTRUCTIONS=cfg["ai_instructions"],
             DEFAULT_UI_MODE=cfg.get("default_ui_mode") or "studio",
         )
-        return HttpResponse(html, content_type="text/html")
+        return _html(html)
 
     if route == "widget":
+        if request.method != "GET":
+            return _method_not_allowed()
         html = _render_template(
             "playbook_builder_widget.html",
             MCP_URL=cfg["mcp_bridge_url"],
             AI_INSTRUCTIONS=cfg["ai_instructions"],
         )
-        return HttpResponse(html, content_type="text/html")
+        return _html(html)
 
     if route == "list_lessons":
-        return JsonResponse(handle_list_lessons({}))
+        if request.method != "GET":
+            return _method_not_allowed()
+        _audit_action_request(request, "list_lessons")
+        return _json(handle_list_lessons({}))
 
-    if route == "poll_playbook" and request.method == "GET" and request.GET.get("playbook_id"):
-        return JsonResponse(
-            handle_poll_playbook({"playbook_id": request.GET.get("playbook_id")})
+    if route == "poll_playbook":
+        if request.method != "POST":
+            return _method_not_allowed()
+        body, error_response = _json_post_body()
+        if error_response is not None:
+            return error_response
+        _audit_action_request(request, "poll_playbook")
+        return _json(handle_poll_playbook(body))
+
+    if route == "proxy_chat":
+        if request.method != "POST":
+            return _method_not_allowed()
+        body, error_response = _json_post_body()
+        if error_response is not None:
+            return error_response
+        _audit_action_request(request, "proxy_chat")
+        return _json(
+            _proxy_chat_to_bridge(
+                body,
+                cfg["mcp_bridge_url"],
+                allow_insecure_http=_config_bool(
+                    cfg.get("mcp_bridge_allow_insecure_http")
+                ),
+            )
         )
-
-    if route == "poll_playbook" and request.method == "POST":
-        try:
-            body = json.loads(request.body or "{}")
-        except json.JSONDecodeError:
-            body = {}
-        return JsonResponse(handle_poll_playbook(body))
-
-    if route == "proxy_chat" and request.method == "POST":
-        try:
-            body = json.loads(request.body or "{}")
-        except json.JSONDecodeError:
-            body = {}
-        return JsonResponse(_proxy_chat_to_bridge(body, cfg["mcp_bridge_url"]))
 
     if route == "es_link" and request.method == "GET":
         from django.http import HttpResponseRedirect
@@ -1570,7 +1894,7 @@ def handle_request(request, path_parts=None):
             param["tab"] = query["tab"]
         target = build_sidecar_chat_url(handler_base, param)
         if request.GET.get("format") == "json":
-            return JsonResponse(
+            return _json(
                 {
                     "status": "ok",
                     "sidecar_url": target,
@@ -1578,7 +1902,7 @@ def handle_request(request, path_parts=None):
                     "message": es_link_status_message(param),
                 }
             )
-        return HttpResponseRedirect(target)
+        return apply_security_headers(HttpResponseRedirect(target))
 
     if route == "splunk_link" and request.method == "GET":
         from django.http import HttpResponseRedirect
@@ -1606,7 +1930,7 @@ def handle_request(request, path_parts=None):
         )
         target = build_sidecar_chat_url(handler_base, param)
         if request.GET.get("format") == "json":
-            return JsonResponse(
+            return _json(
                 {
                     "status": "ok",
                     "sidecar_url": target,
@@ -1614,6 +1938,9 @@ def handle_request(request, path_parts=None):
                     "message": splunk_link_status_message(param),
                 }
             )
-        return HttpResponseRedirect(target)
+        return apply_security_headers(HttpResponseRedirect(target))
 
-    return JsonResponse({"status": "error", "error": f"Unknown route: {route}"}, status=404)
+    return _json(
+        {"status": "error", "error": f"Unknown route: {route}"},
+        status=404,
+    )

@@ -141,15 +141,18 @@ def persist_asset_defaults(
             continue
         if key in {
             "mcp_bridge_url",
+            "mcp_bridge_allow_insecure_http",
+            "soar_loopback_allow_insecure_tls",
+            "soar_loopback_ca_bundle",
             "ai_instructions",
             "asset_defaults",
             "custom_templates_json",
+            "custom_ir_templates_json",
+            "allow_legacy_python_templates",
             "playbook_defaults_json",
             "es_web_url",
             "sample_cases_json",
             "soar_rest_token",
-            "phenv_use_sudo",
-            "phenv_path",
         }:
             configuration.setdefault(key, val)
 

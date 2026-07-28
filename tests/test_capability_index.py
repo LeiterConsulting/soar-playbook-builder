@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1] / "soar_playbook_builder"
 sys.path.insert(0, str(ROOT))
@@ -18,6 +23,7 @@ from capability.index import (  # noqa: E402
     load_egress_tags,
     load_index,
     merge_baseline,
+    save_index,
 )
 from capability.introspect import harvest_all  # noqa: E402
 from capability.schema import AppCapability, CapabilityIndex  # noqa: E402
@@ -72,25 +78,77 @@ def test_merge_marks_discovered_plus_baseline_as_merged():
 
 
 def test_build_index_offline_persists():
-    tmp = ROOT / "capability" / ".index" / "test_capability_index.json"
-    tmp.parent.mkdir(parents=True, exist_ok=True)
-    if tmp.exists():
-        tmp.unlink()
-    index, saved = build_index(
-        rest_fn=lambda *_a, **_k: (False, "offline test"),
-        persist=True,
-        path=tmp,
-    )
-    assert saved is not None
-    assert saved.is_file()
-    assert "phantom" in index.apps
-    reloaded = load_index(path=tmp)
-    assert reloaded is not None
-    assert reloaded.index_version == index.index_version
-    status = index_status(path=tmp)
-    assert status["loaded"] is True
-    assert status["action_count"] >= 5
-    tmp.unlink(missing_ok=True)
+    with tempfile.TemporaryDirectory() as directory:
+        tmp = Path(directory) / "test_capability_index.json"
+        index, saved = build_index(
+            rest_fn=lambda *_a, **_k: (False, "offline test"),
+            persist=True,
+            path=tmp,
+        )
+        assert saved is not None
+        assert saved.is_file()
+        assert "phantom" in index.apps
+        reloaded = load_index(path=tmp)
+        assert reloaded is not None
+        assert reloaded.index_version == index.index_version
+        status = index_status(path=tmp)
+        assert status["loaded"] is True
+        assert status["action_count"] >= 5
+
+
+def test_corrupt_index_recovers_last_good(tmp_path: Path):
+    target = tmp_path / "capability_index.json"
+    first = CapabilityIndex(index_version="first", apps=load_baseline_apps())
+    second = CapabilityIndex(index_version="second", apps=load_baseline_apps())
+    save_index(first, target)
+    save_index(second, target)
+
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    payload["index_version"] = "tampered"
+    target.write_text(json.dumps(payload), encoding="utf-8")
+
+    recovered = load_index(target)
+    status = index_status(target)
+    assert recovered is not None
+    assert recovered.index_version == "first"
+    assert status["recovered_from_last_good"] is True
+    assert "capability_index.json" in status["integrity_error"]
+
+
+def test_checksum_mismatch_without_backup_fails_closed(tmp_path: Path):
+    target = tmp_path / "capability_index.json"
+    save_index(CapabilityIndex(index_version="one", apps=load_baseline_apps()), target)
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    payload["index_version"] = "tampered"
+    target.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert load_index(target) is None
+    status = index_status(target)
+    assert status["loaded"] is False
+    assert "checksum mismatch" in status["integrity_error"]
+
+
+def test_failed_atomic_replace_preserves_current_index(tmp_path: Path):
+    target = tmp_path / "capability_index.json"
+    first = CapabilityIndex(index_version="first", apps=load_baseline_apps())
+    second = CapabilityIndex(index_version="second", apps=load_baseline_apps())
+    save_index(first, target)
+    before = target.read_bytes()
+    real_replace = os.replace
+
+    def replace_with_target_failure(source, destination):
+        if Path(destination) == target:
+            raise OSError("simulated replace failure")
+        return real_replace(source, destination)
+
+    with patch("capability.index.os.replace", side_effect=replace_with_target_failure):
+        with pytest.raises(OSError, match="simulated replace failure"):
+            save_index(second, target)
+
+    assert target.read_bytes() == before
+    loaded = load_index(target)
+    assert loaded is not None
+    assert loaded.index_version == "first"
 
 
 def test_harvest_all_offline_returns_errors():

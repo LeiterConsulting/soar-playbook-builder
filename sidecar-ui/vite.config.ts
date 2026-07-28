@@ -4,7 +4,8 @@ import { resolve } from "path";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const soarTarget = env.VITE_SOAR_URL || "https://10.236.39.108:8443";
+  const soarTarget = env.VITE_SOAR_URL?.trim() || "https://127.0.0.1:8443";
+  const allowInsecureSoarTls = env.VITE_SOAR_TLS_INSECURE === "true";
 
   return {
     base: "./",
@@ -19,7 +20,7 @@ export default defineConfig(({ mode }) => {
             "/rest": {
               target: soarTarget,
               changeOrigin: true,
-              secure: false,
+              secure: !allowInsecureSoarTls,
               configure: (proxy) => {
                 const user = env.VITE_SOAR_USER;
                 const pass = env.VITE_SOAR_PASS;

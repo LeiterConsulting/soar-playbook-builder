@@ -1,31 +1,35 @@
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import type { ReactNode } from "react";
 import { EnvironmentMenu } from "../components/EnvironmentMenu";
 import { EsBackLink } from "../components/EsBackLink";
 import { WorkflowStrip } from "../components/WorkflowStrip";
 import { useBuilder } from "../context/BuilderProvider";
+import { routeHref, type AppRoute } from "../navigation";
 import { personaSubtitle, personaTitle } from "../personas";
 
-const NAV_STUDIO = [
-  { to: "/build", label: "Build" },
-  { to: "/run", label: "Run" },
-  { to: "/help", label: "Help" },
+interface AppLayoutProps {
+  route: AppRoute;
+  children: ReactNode;
+}
+
+const NAV_STUDIO: Array<{ to: AppRoute; label: string }> = [
+  { to: "build", label: "Build" },
+  { to: "run", label: "Run" },
+  { to: "help", label: "Help" },
 ];
 
-const NAV_COACH = [
-  { to: "/coach", label: "Coach" },
-  { to: "/help", label: "Help" },
+const NAV_COACH: Array<{ to: AppRoute; label: string }> = [
+  { to: "coach", label: "Coach" },
+  { to: "help", label: "Help" },
 ];
 
-const NAV_ASSISTANT = [
-  { to: "/build", label: "Build" },
-  { to: "/help", label: "Help" },
+const NAV_ASSISTANT: Array<{ to: AppRoute; label: string }> = [
+  { to: "build", label: "Build" },
+  { to: "help", label: "Help" },
 ];
 
-export function AppLayout() {
+export function AppLayout({ route, children }: AppLayoutProps) {
   const b = useBuilder();
-  const { pathname } = useLocation();
-  const showWorkflowStrip =
-    (pathname === "/build" || pathname.endsWith("/build")) && b.personaMode === "studio";
+  const showWorkflowStrip = route === "build" && b.personaMode === "studio";
   const nav =
     b.personaMode === "coach" || b.personaMode === "tutor"
       ? NAV_COACH
@@ -81,19 +85,20 @@ export function AppLayout() {
 
       <nav className="app-nav" aria-label="Main">
         {nav.map(({ to, label }) => (
-          <NavLink
+          <a
             key={to}
-            to={to}
-            className={({ isActive }) => `app-nav-link${isActive ? " active" : ""}`}
+            href={routeHref(to)}
+            className={`app-nav-link${route === to ? " active" : ""}`}
+            aria-current={route === to ? "page" : undefined}
           >
             {label}
-          </NavLink>
+          </a>
         ))}
       </nav>
 
       {showWorkflowStrip && <WorkflowStrip activeStep={b.workflowStep} />}
 
-      <Outlet />
+      <main className="app-main">{children}</main>
     </>
   );
 }

@@ -61,6 +61,42 @@ export function mockScaffold(pattern: string): BuilderResponse {
   };
 }
 
+export function mockTrustedIrReview(pattern: string): BuilderResponse {
+  const isHello = pattern === "hello";
+  const gapId = pattern.includes("servicenow")
+    ? "ACTION_INSTALLATION_UNVERIFIED"
+    : "ASSET_UNBOUND";
+  return {
+    status: "success",
+    review_only: true,
+    import_enabled: false,
+    import_block_reason: "TRUSTED_IMPORT_DISABLED",
+    compile_eligible: isHello,
+    ready_for_import: false,
+    review_id: "a".repeat(64),
+    ir_sha256: "b".repeat(64),
+    compiler_version: "0.1.0",
+    gap_report: {
+      status: isHello ? "ok" : "blocked",
+      gaps: isHello
+        ? []
+        : [
+            {
+              id: gapId,
+              severity: "blocker",
+              node: "run_action",
+              summary: "Mock capability evidence is incomplete.",
+            },
+          ],
+    },
+    artifacts: {
+      python_sha256: "c".repeat(64),
+      visual_sha256: "d".repeat(64),
+      native_schema_status: "unverified_without_live_soar",
+    },
+  };
+}
+
 const MOCK_OFFLINE_NOTE =
   "\n\n_(Mock mode — offline builder. On SOAR with MCP bridge up, custom prompts use the LLM instead of keyword templates.)_";
 

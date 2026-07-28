@@ -1,6 +1,8 @@
 import { useState } from "react";
 import type { PatternDefinition } from "../patterns/registry";
 import { WIZARD_SCENARIOS, type WizardScenario } from "../patterns/scenarios";
+import type { BuilderResponse } from "../types";
+import { TrustedIrReviewPanel } from "./TrustedIrReviewPanel";
 
 const TEMPLATES_COLLAPSED_KEY = "pb-templates-collapsed";
 
@@ -28,6 +30,7 @@ interface TemplateLibraryProps {
   onUseScenarioPrompt?: (scenario: WizardScenario) => void;
   busy?: boolean;
   scoreLabel?: string;
+  onTrustedReview?: (templateId: string) => Promise<BuilderResponse>;
 }
 
 function groupPatterns(
@@ -67,6 +70,7 @@ export function TemplateLibrary({
   onUseScenarioPrompt,
   busy,
   scoreLabel,
+  onTrustedReview,
 }: TemplateLibraryProps) {
   const [collapsed, setCollapsed] = useState(readCollapsedPreference);
   const groups = groupPatterns(patterns, byCategory);
@@ -78,6 +82,12 @@ export function TemplateLibrary({
   const orgCount =
     orgTemplateCount > 0 ? orgTemplateCount : patterns.filter((p) => p.org).length;
   const countLabel = templateCountLabel(builtinCount, orgCount);
+  const trustedOrganizationTemplate = Boolean(
+    selected?.org && selected.trusted_ir,
+  );
+  const legacyOrganizationTemplate = Boolean(
+    selected?.org && !selected.trusted_ir,
+  );
 
   const toggleCollapsed = () => {
     setCollapsed((prev) => {
@@ -142,13 +152,18 @@ export function TemplateLibrary({
           <button
             type="button"
             className={`btn btn-primary${busy ? " busy" : ""}`}
-            disabled={busy}
+            disabled={busy || trustedOrganizationTemplate}
             onClick={onLoad}
           >
-            Load template
+            {trustedOrganizationTemplate ? "Review IR below" : "Load template"}
           </button>
           {onValidate && (
-            <button type="button" className="btn secondary" disabled={busy} onClick={onValidate}>
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={busy || trustedOrganizationTemplate}
+              onClick={onValidate}
+            >
               Validate
             </button>
           )}
@@ -161,6 +176,12 @@ export function TemplateLibrary({
 
             <div className="template-detail-meta">
               {selected.org && <span className="template-badge org">Organization</span>}
+              {selected.trusted_ir && (
+                <span className="template-badge offline">Strict IR</span>
+              )}
+              {legacyOrganizationTemplate && (
+                <span className="template-badge warn">Legacy Python · untrusted</span>
+              )}
               {selected.offline !== false && (
                 <span className="template-badge offline">Works offline</span>
               )}
@@ -214,16 +235,26 @@ export function TemplateLibrary({
           </div>
         )}
 
+        {selected && onTrustedReview && (
+          <TrustedIrReviewPanel
+            templateId={selected.id}
+            isLegacyPythonTemplate={legacyOrganizationTemplate}
+            busy={busy}
+            onReview={onTrustedReview}
+          />
+        )}
+
         <p className="template-library-footnote">
           {orgCount > 0 ? (
             <>
               Includes <strong>{orgCount}</strong> organization template
-              {orgCount === 1 ? "" : "s"} from asset <code>custom_templates_json</code>.
+              {orgCount === 1 ? "" : "s"} from asset{" "}
+              <code>custom_ir_templates_json</code>.
             </>
           ) : (
             <>
               Starter set — admins can add org templates on the asset (
-              <code>custom_templates_json</code>) without rebuilding the app.
+              <code>custom_ir_templates_json</code>) without rebuilding the app.
             </>
           )}{" "}
           Help → <strong>Growing &amp; Customizing Templates</strong>.

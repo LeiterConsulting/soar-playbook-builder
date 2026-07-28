@@ -1,15 +1,31 @@
 /** In-app guide for growing the template library (mirrors docs/CUSTOMIZATION.md). */
 
 const ORG_JSON_EXAMPLE = `{
+  "schema_version": "1.0",
   "templates": [
     {
-      "id": "org-crowdstrike-isolate",
-      "label": "CrowdStrike Host Isolate",
-      "description": "Isolate endpoint when severity is high.",
-      "tier": "destructive",
-      "integrations": ["crowdstrike"],
-      "nl_keywords": ["crowdstrike", "isolate host"],
-      "source": "import phantom.app as phantom\\n\\ndef on_start(container):\\n    phantom.add_note(container=container, content='Isolate host', title='Org')\\n    on_finish(container)\\n\\ndef on_finish(container):\\n    phantom.debug('done')\\n"
+      "id": "org-review-note",
+      "label": "Organization Review Note",
+      "tier": "safe",
+      "nl_keywords": ["organization review note"],
+      "ir": {
+        "schema_version": "1.0.0",
+        "id": "org-review-note",
+        "name": "Organization Review Note",
+        "description": "Format a deterministic review note.",
+        "entrypoint": "start",
+        "nodes": [
+          {"id": "start", "type": "start", "next": "format_note"},
+          {"id": "format_note", "type": "format", "template": "Review required", "inputs": {}, "output": "note", "next": "complete"},
+          {"id": "complete", "type": "end", "outcome": "success"}
+        ],
+        "metadata": {
+          "capability_index_version": "organization-template-unbound",
+          "operating_mode": "air_gapped",
+          "template_id": "org-review-note",
+          "labels": ["organization", "review"]
+        }
+      }
     }
   ]
 }`;
@@ -30,7 +46,7 @@ export function HelpCustomizeTemplatesGuide() {
         <ul className="help-guide-topic-body">
           <li>
             Admins paste JSON into the Playbook Builder asset field{" "}
-            <code>custom_templates_json</code>.
+            <code>custom_ir_templates_json</code>.
           </li>
           <li>
             Each template <code>id</code> must start with <code>org-</code> (e.g.{" "}
@@ -38,15 +54,20 @@ export function HelpCustomizeTemplatesGuide() {
           </li>
           <li>
             Templates appear in the Build tab under <strong>Organization</strong> with an{" "}
-            <strong>[Org]</strong> badge. The header shows how many org templates loaded.
+            <strong>[Org]</strong> and <strong>Strict IR</strong> badge. Use the separate trusted
+            review card; import remains locked until live SOAR qualification is complete.
           </li>
           <li>
-            Use for customer-specific starters, VPE exports, or air-gapped sites that cannot install
-            a new <code>.tgz</code>.
+            The IR parser rejects executable source, unknown fields, invalid graphs, duplicate JSON
+            keys, non-finite numbers, and oversized configuration.
           </li>
           <li>
-            Invalid entries are skipped; errors show in chat when patterns load and in{" "}
-            <code>org_errors</code> from <code>list_patterns</code>.
+            Legacy Python in <code>custom_templates_json</code> is ignored by default. The
+            lab-only <code>allow_legacy_python_templates</code> switch does not make it trusted.
+          </li>
+          <li>
+            Invalid entries are skipped; <code>org_errors</code> and <code>org_warnings</code>{" "}
+            from <code>list_patterns</code> also surface in chat.
           </li>
         </ul>
         <p className="help-guide-footnote">
@@ -60,8 +81,8 @@ export function HelpCustomizeTemplatesGuide() {
           </summary>
           <pre className="help-guide-code">{ORG_JSON_EXAMPLE}</pre>
           <p className="help-guide-footnote">
-            Copy-paste starter: <code>sample_data/sample_org_templates.json</code> in the install
-            package.
+            Copy-paste starter: <code>sample_data/sample_org_ir_templates.json</code> in the
+            install package.
           </p>
         </details>
       </details>
@@ -94,7 +115,7 @@ export function HelpCustomizeTemplatesGuide() {
         <ul className="help-guide-topic-body">
           <li>
             <strong>Setup assistant</strong> (Help → First-Time Setup) → Export asset config includes{" "}
-            <code>custom_templates_json</code> when set.
+            <code>custom_ir_templates_json</code> when set.
           </li>
           <li>
             When moving SOAR instances, export asset config before shutdown and paste into the new

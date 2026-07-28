@@ -1,9 +1,8 @@
-import { useNavigate } from "react-router-dom";
 import { useBuilder } from "../context/BuilderProvider";
+import { navigateToRoute } from "../navigation";
 
 export function CoachRespondPanel() {
   const b = useBuilder();
-  const navigate = useNavigate();
   const suggest = b.coachSuggest;
   const loading = b.coachLoading;
   const intel = suggest?.case_intel as { run_count?: number; recent_runs?: unknown[] } | undefined;
@@ -55,7 +54,11 @@ export function CoachRespondPanel() {
             </button>
           )}
           {b.personaMode === "studio" && b.canRunOnContainer && (
-            <button type="button" className="btn btn-ghost" onClick={() => navigate("/run")}>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => navigateToRoute("run")}
+            >
               Open Run tab
             </button>
           )}

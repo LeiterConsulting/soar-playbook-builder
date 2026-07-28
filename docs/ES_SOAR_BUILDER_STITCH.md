@@ -82,7 +82,7 @@ Shipped in this repo — one-click from any case.
 ### Install
 
 ```bash
-cd packaging/soar-playbook-builder-app
+cd soar-playbook-builder
 python3 utility_playbooks/package_utility_playbooks.py
 # → dist/open_playbook_builder.tgz
 

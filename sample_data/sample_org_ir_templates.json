@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0",
+  "templates": [
+    {
+      "id": "org-review-note",
+      "label": "Organization Review Note",
+      "category": "Organization",
+      "description": "Strict IR example that formats a review note without executable template source.",
+      "tier": "safe",
+      "integrations": [],
+      "nl_keywords": [
+        "organization review note",
+        "format review summary"
+      ],
+      "ir": {
+        "schema_version": "1.0.0",
+        "id": "org-review-note",
+        "name": "Organization Review Note",
+        "description": "Format an organization review note for analyst inspection.",
+        "entrypoint": "start",
+        "nodes": [
+          {
+            "id": "start",
+            "type": "start",
+            "next": "format_note"
+          },
+          {
+            "id": "format_note",
+            "type": "format",
+            "template": "Review case severity: {severity}",
+            "inputs": {
+              "severity": {
+                "kind": "datapath",
+                "scope": "container",
+                "path": [
+                  "severity"
+                ]
+              }
+            },
+            "output": "review_note",
+            "next": "complete"
+          },
+          {
+            "id": "complete",
+            "type": "end",
+            "outcome": "success"
+          }
+        ],
+        "metadata": {
+          "capability_index_version": "organization-template-unbound",
+          "operating_mode": "air_gapped",
+          "template_id": "org-review-note",
+          "labels": [
+            "organization",
+            "review"
+          ]
+        }
+      }
+    }
+  ]
+}

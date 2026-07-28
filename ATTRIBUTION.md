@@ -4,8 +4,26 @@
 
 The **SOAR Playbook Builder** is a custom Splunk SOAR application (`soar_playbook_builder`). It is **not** a Splunk product, Splunkbase listing, or official Splunk-supported app unless separately published and certified by Splunk.
 
-Copyright and license: see `soar_playbook_builder/soar_playbook_builder.json` (`license`: Apache 2.0).  
+Copyright and license: [MIT](LICENSE), also declared in
+`soar_playbook_builder/soar_playbook_builder.json`.
 Customize `publisher` in the manifest before distributing under your organization’s name.
+
+---
+
+## Bundled sidecar components
+
+The installable archive includes browser bundles built from these locked
+dependencies:
+
+| Component | Locked version | License |
+|---|---:|---|
+| React | 19.2.8 | MIT |
+| React DOM | 19.2.8 | MIT |
+| highlight.js | 11.11.1 | BSD-3-Clause |
+
+Their license texts are packaged under `THIRD_PARTY_LICENSES/`. Vite,
+TypeScript, and the React Vite plugin are build tools and are recorded in the
+release SBOM; they are not installed on or loaded by SOAR at runtime.
 
 ---
 

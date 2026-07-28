@@ -1,234 +1,183 @@
-# On-prem and private LLM deployment
+# On-prem and private model deployment
 
-This guide is for customers who run **Mode B** (MCP agent bridge + natural language) with a **fully localized LLM** — no public-cloud model API required. Playbook source and chat text stay inside the customer network when SOAR, the MCP bridge, and the LLM endpoint are all on-prem (or in the same private cloud).
+This guide describes the hardened target for natural-language generation. The
+trusted path is:
 
-**Related docs:** [ARCHITECTURE.md](./ARCHITECTURE.md) · [MCP_INTEGRATION.md](./MCP_INTEGRATION.md) · [PLAYBOOK_BUILDER_GUIDE.md](./PLAYBOOK_BUILDER_GUIDE.md)
-
----
-
-## Summary
-
-| Question | Answer |
-|----------|--------|
-| Does Playbook Builder require a public-cloud LLM? | **No.** |
-| Where is the LLM configured? | On the **MCP bridge host** (`.env` / secrets manager) — **never** on the SOAR app asset. |
-| What API does the bridge expect? | **OpenAI-compatible Chat Completions** (`POST /v1/chat/completions`). |
-| Do templates, validate, and modern import need an LLM? | **No** — those run on SOAR (Mode A). |
-| What needs an LLM? | Open-ended NL **build** and **refine** when no template keyword match exists. |
-
----
-
-## Trust boundary (on-prem)
-
-```
-┌─────────────┐   SOAR session    ┌──────────────────┐   HTTP (internal)   ┌─────────────────┐
-│   Analyst   │ ────────────────► │  SOAR Playbook   │ ──────────────────► │  MCP bridge     │
-│   browser   │ ◄──────────────── │  Builder app     │ ◄────────────────── │  (customer VM)  │
-└─────────────┘                   └──────────────────┘                     └────────┬────────┘
-                                                                                     │ HTTP (internal)
-                                                                                     ▼
-                                                                            ┌─────────────────┐
-                                                                            │  On-prem LLM    │
-                                                                            │  Ollama / vLLM  │
-                                                                            │  LiteLLM / etc. │
-                                                                            └─────────────────┘
+```text
+request + local capability evidence
+        |
+        v
+OpenAI-compatible local endpoint
+        |
+        v
+strict JSON decode -> Playbook IR -> deterministic preflight -> compiler
 ```
 
-- SOAR asset stores only **`mcp_bridge_url`** (e.g. `http://bridge.internal:8003/agent`).
-- **`OPENAI_API_KEY`**, **`OPENAI_BASE_URL`**, and **`AGENT_BRIDGE_MODEL`** live on the bridge host.
-- No playbook or chat content is sent to OpenAI.com unless you point `OPENAI_BASE_URL` there.
+The model never supplies Python, shell, tools, remediation text, permission
+evidence, or an import decision.
 
----
+## Current status
 
-## Capabilities with an on-prem LLM
+The repository now contains the offline provider boundary, strict decoder,
+bounded repair loop, deterministic preflight, and compiler. They pass scripted
+adversarial tests without a live model or SOAR instance.
 
-### Always available (no LLM — Mode A on SOAR)
+They are not yet connected to the installed app's Build/Import flow. The
+existing MCP bridge can return model-authored Python `source`; that is a legacy
+experimental path and is not part of the trusted compiler. Keep Mode B disabled
+for production until the UI and REST routes accept only trusted IR results.
 
-- Pattern library (ServiceNow, ClearPass, ES notable, enrichment, …)
-- **Generate template**, validate, block/code preview
-- **Modern visual import** (COA + Python 3.13)
-- **Asset preflight** (integration mapping before import)
-- Keyword NL (“build a ServiceNow P1 incident…”) via `local_nl_build.py`
+Live qualifications still required:
 
-### Requires LLM on bridge (Mode B)
+- a selected local model/runtime must pass the constrained-output corpus;
+- endpoint TLS, authentication, timeout, and resource behavior must pass on the
+  intended deployment host;
+- the resulting compiler artifacts must pass a supported live SOAR runtime;
+- no Import or Run control may accept legacy bridge-authored Python.
 
-- **Novel** natural-language requests that do not match a built-in pattern (e.g. custom WHOIS + tier2 logic)
-- **Multi-turn refine** beyond simple rule-based edits (e.g. “add a decision on registrant age”)
+See [MODEL_BOUNDARY.md](./MODEL_BOUNDARY.md) for the exact software contract.
 
-### Same on-prem as cloud (when LLM is configured)
+## Endpoint contract
 
-- Sidecar **AI connected** (bridge reachable from SOAR)
-- MCP SOAR tools (list playbooks, assets, import via IDE) — independent of LLM
-- Import path — always runs **on SOAR**, not on the LLM host
+The built-in provider uses one narrow OpenAI-compatible endpoint:
 
-**Model quality note:** The bridge system prompt targets SOAR `phantom.app` Python. Smaller local models may need validation/tuning; templates and Mode A remain the fallback.
+```text
+POST <base_url>/chat/completions
+```
 
----
+The configured `base_url` must end in `/v1`. The provider can send:
 
-## Requirements for your LLM stack
+- strict `response_format.type=json_schema` when the selected backend proves
+  support;
+- a top-level GBNF `grammar` field when the selected backend proves support; or
+- unconstrained JSON text only under the explicit
+  `allow_unconstrained_json=True` lab flag, followed by the same strict decoder
+  and preflight.
 
-1. **OpenAI-compatible HTTP API** exposing chat completions (same JSON shape as OpenAI `v1/chat/completions`).
-2. **Reachable from the MCP bridge host** (SOAR → bridge → LLM; SOAR does not call the LLM directly).
-3. **Model name** known to your server (passed as `AGENT_BRIDGE_MODEL`).
-4. Sufficient **context length** for playbook Python (bridge requests up to ~2500 completion tokens).
+`probe()` does not infer support from a successful HTTP status. It requires the
+backend to produce the exact constrained empty object before recording schema or
+grammar support. Capability claims are therefore backend/model/configuration
+specific and must be re-probed after changes.
 
-Common stacks that work:
+Production generation fails closed with `CONSTRAINT_UNAVAILABLE` when neither
+constraint is proven.
 
-| Stack | Typical `OPENAI_BASE_URL` |
-|-------|---------------------------|
-| **Ollama** (OpenAI compatibility) | `http://localhost:11434/v1` |
-| **vLLM** | `http://llm.internal:8000/v1` |
-| **LiteLLM** gateway | `http://litellm.internal:4000/v1` |
-| **Azure OpenAI** (private tenant) | `https://<resource>.openai.azure.com/openai/deployments/<deployment>` — use provider-specific SDK URL format; LiteLLM proxy is often simpler |
-| **Text Generation Inference (TGI)** | Use an OpenAI-compatible front proxy or LiteLLM |
+## Network and certificate policy
 
----
+Defaults are deliberately strict:
 
-## Bridge configuration
+- HTTPS is required.
+- TLS certificates and hostnames are verified.
+- redirects and environment proxies are disabled;
+- embedded credentials, URL query strings, fragments, relative path segments,
+  metadata endpoints, link-local, reserved, multicast, and unspecified
+  addresses are blocked;
+- loopback requires `allow_loopback=True`;
+- plain HTTP requires the separate `allow_insecure_http=True` lab override;
+- disabled TLS verification requires the separate
+  `allow_insecure_tls=True` lab override;
+- request, message, response, and timeout limits are bounded;
+- custom CA bundles must be existing absolute files; and
+- provider errors contain stable codes, not response bodies or secrets.
 
-On the **MCP bridge host**, set environment variables before starting the server (e.g. in `mcp-for-splunk/.env` or a secrets manager):
+The lab overrides are independent. Allowing local HTTP never silently permits
+unverified HTTPS.
+
+For access from another workstation, bind the model runtime to the private LAN
+only, restrict its port in the host firewall to the builder/SOAR hosts, and put
+authentication plus TLS termination in front of it. Do not expose an
+unauthenticated `0.0.0.0` listener to the internet.
+
+## Example provider configuration
+
+This is a library-level example; it does not enable the app UI:
+
+```python
+from llm import (
+    GenerationContext,
+    OpenAICompatibleProvider,
+    ProviderConfig,
+    generate_ir,
+)
+
+config = ProviderConfig(
+    base_url="https://llm.internal.example/v1",
+    model="organization-qualified-model",
+    auth_value="Bearer <token-from-secret-store>",
+    ca_bundle="/etc/pki/ca-trust/source/anchors/internal-ca.pem",
+)
+
+capabilities = OpenAICompatibleProvider(config).probe()
+provider = OpenAICompatibleProvider(config, capabilities=capabilities)
+
+result = generate_ir(
+    provider,
+    "Enrich the artifact IP and route failures to a neutral end node.",
+    capability_index,
+    context=GenerationContext(
+        operating_mode="air_gapped",
+        model="organization-qualified-model",
+        prompt_version="ir-generate-v1",
+        generated_at="2026-07-28T16:00:00+00:00",
+        evaluated_at="2026-07-28T16:00:00+00:00",
+    ),
+)
+```
+
+Tokens belong in a secret store on the endpoint/bridge host. They must not be
+committed, placed in IR, returned to the browser, or exported with SOAR asset
+configuration.
+
+## Choosing a runtime for the available workstation
+
+For a single powerful GPU workstation, start with the runtime that can reliably
+enforce the emitted JSON Schema or GBNF and expose a private OpenAI-compatible
+API. Operational simplicity matters more than maximum throughput during
+qualification.
+
+- A llama.cpp-compatible server is attractive for the first gate because the
+  repository emits and externally validates GBNF.
+- Ollama is convenient for local model and lifecycle experiments, but its exact
+  constrained-output behavior must be probed and tested rather than assumed.
+- vLLM is a strong candidate when Linux/CUDA serving throughput, batching, and
+  multi-client operation become priorities.
+- A gateway adds routing and policy features but also adds another dependency,
+  configuration surface, and failure boundary. Do not add one until it solves a
+  demonstrated requirement.
+
+Runtime and model support are evidence-based. A model is not supported merely
+because it starts or returns plausible JSON.
+
+## Offline qualification
+
+Run the deterministic boundary tests:
 
 ```bash
-# Required for LLM-backed NL build/refine
-OPENAI_API_KEY=local-or-gateway-token          # Some servers accept any non-empty string
-OPENAI_BASE_URL=http://llm.internal:11434/v1   # Your on-prem OpenAI-compatible endpoint
-AGENT_BRIDGE_MODEL=llama3.1:70b                # Must match the model ID your server exposes
-
-# MCP server (defaults shown)
-MCP_SERVER_HOST=0.0.0.0
-MCP_SERVER_PORT=8003
-MCP_STATELESS_HTTP=true
-MCP_JSON_RESPONSE=true
+python3 soar_playbook_builder/eval/harness.py --suite model_boundary
+python3 -m pytest -q tests/test_llm_provider.py tests/test_llm_decode.py
 ```
 
-Start the bridge (from `mcp-for-splunk` repo root):
+Then qualify the real endpoint with network capture or a deny-by-default egress
+policy:
 
-```bash
-cd mcp-for-splunk
-uv sync
-uv run python src/server.py --transport http --host 0.0.0.0 --port 8003
-```
+1. record provider/runtime/model version and model-file digest;
+2. probe schema and grammar support;
+3. run the fixed generation corpus at the bounded attempt count;
+4. prove invalid JSON, duplicate keys, executable fields, hallucinated
+   capabilities, timeout, oversize response, and repair exhaustion all block;
+5. confirm raw model text and credentials never appear in reports or browser
+   responses; and
+6. publish the exact pass rate instead of a generic “AI works” claim.
 
-Or use the helper script (stops any existing process on the port first):
+## Success criteria
 
-```bash
-packaging/soar-playbook-builder-app/scripts/enable-llm-playbooks.sh
-# Omit OpenAI cloud key — set OPENAI_BASE_URL + AGENT_BRIDGE_MODEL in .env instead
-```
+A local model configuration is eligible for the app only when:
 
-### SOAR asset (Playbook Builder)
-
-| Field | Example |
-|-------|---------|
-| `mcp_bridge_url` | `http://10.0.50.12:8003/agent` |
-
-SOAR must reach this URL from the **SOAR server process** (test with `curl` on the SOAR host, not only from your laptop).
-
----
-
-## Example: Ollama on the same host as the bridge
-
-```bash
-# Terminal 1 — Ollama with a code-capable model
-ollama pull llama3.1:70b
-ollama serve   # default http://127.0.0.1:11434
-
-# Terminal 2 — MCP bridge
-export OPENAI_API_KEY=ollama
-export OPENAI_BASE_URL=http://127.0.0.1:11434/v1
-export AGENT_BRIDGE_MODEL=llama3.1:70b
-cd mcp-for-splunk
-uv run python src/server.py --transport http --host 0.0.0.0 --port 8003
-```
-
-Verify:
-
-```bash
-curl -sS http://127.0.0.1:8003/agent/health
-curl -sS -X POST http://127.0.0.1:8003/agent/api/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"message":"Build a playbook that enriches sender domain via WHOIS and assigns tier2 if registered in the last 30 days","context":{}}' \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print('source' in d, d.get('pattern'))"
-```
-
-Expect `"source"` in the JSON response when the LLM path is working.
-
----
-
-## Example: vLLM behind an internal load balancer
-
-```bash
-export OPENAI_API_KEY=not-used
-export OPENAI_BASE_URL=https://vllm.internal.company.com/v1
-export AGENT_BRIDGE_MODEL=mistral-7b-instruct-v0.3
-```
-
-Ensure TLS trust (corporate CA) on the bridge host if using HTTPS.
-
----
-
-## Example: LiteLLM as a single internal gateway
-
-Point all models through LiteLLM; rotate models without changing SOAR:
-
-```bash
-export OPENAI_API_KEY=<litellm-master-key>
-export OPENAI_BASE_URL=http://litellm.internal:4000/v1
-export AGENT_BRIDGE_MODEL=soar-playbook-builder   # LiteLLM model alias
-```
-
-Configure the alias in LiteLLM to route to your preferred on-prem backend.
-
----
-
-## Air-gapped checklist
-
-- [ ] SOAR app installed; **`mcp_bridge_url`** points to internal bridge only  
-- [ ] MCP bridge on a host SOAR can reach (firewall allow-list)  
-- [ ] LLM endpoint reachable **only** from bridge (no internet egress required)  
-- [ ] `OPENAI_BASE_URL` + `AGENT_BRIDGE_MODEL` set on bridge; **no** public OpenAI URL  
-- [ ] `curl http://<bridge>:8003/agent/health` succeeds **from SOAR server**  
-- [ ] Sidecar shows **AI connected**  
-- [ ] Novel NL prompt returns Python `source` (not “Set OPENAI_API_KEY…”)  
-- [ ] **`asset_defaults`** configured for ServiceNow / ClearPass / etc. ([CUSTOMIZATION.md](./CUSTOMIZATION.md))  
-- [ ] Data-handling review: chat + source flow SOAR → bridge → internal LLM only  
-
----
-
-## Troubleshooting
-
-| Symptom | Likely cause | Fix |
-|---------|--------------|-----|
-| Sidecar **Templates only** | SOAR cannot reach bridge | Fix `mcp_bridge_url`, network, tunnel |
-| **AI connected** but “Set OPENAI_API_KEY…” | Bridge up; LLM not configured or call failed | Set `OPENAI_BASE_URL` + `AGENT_BRIDGE_MODEL`; check bridge logs |
-| LLM timeout / empty source | Model too small or wrong name | Use larger instruct/code model; verify `AGENT_BRIDGE_MODEL` |
-| Import works; NL does not | Mode A still OK; Mode B LLM path broken | Fix bridge LLM env; templates still work |
-| Sidecar **AI connected** but “Set OPENAI_API_KEY…” on novel prompts | Bridge up; **LLM call failed** (missing key, placeholder in `.env`, or network/proxy blocks model API) | Load `.env.secrets` and restart MCP; set `NO_PROXY=api.openai.com,openai.com`; or use on-prem `OPENAI_BASE_URL` |
-| WHOIS-style **Build** prompt returns refine error | Fixed in latest bridge — old builds treated “adds a note” as refine | Restart MCP after `git pull`; or click **Generate template** for known patterns |
-
-Bridge logs: `mcp-for-splunk/logs/mcp_splunk_server.log`
-
-Implementation reference: `mcp_soar_tutor/agent_bridge/nl_build.py` (`AsyncOpenAI` + `OPENAI_BASE_URL` from environment).
-
----
-
-## Public cloud vs on-prem (policy comparison)
-
-| | Public OpenAI | On-prem LLM |
-|--|---------------|-------------|
-| Egress from bridge | Internet | Internal only |
-| Keys on SOAR | Never | Never |
-| Keys on bridge | `OPENAI_API_KEY` | Gateway token or dummy |
-| Template/import path | SOAR-local | SOAR-local |
-| NL invent/refine | Yes | Yes (if model sufficient) |
-
-For strict data sovereignty, use **on-prem LLM + internal bridge URL** and leave `OPENAI_BASE_URL` unset or pointed at an internal hostname only.
-
----
-
-## See also
-
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — Mode A vs Mode B capability matrix  
-- [MCP_INTEGRATION.md](./MCP_INTEGRATION.md) — HTTP endpoints and security  
-- [REPLICATION_HANDOFF.md](./REPLICATION_HANDOFF.md) — SOC engineering handoff  
-- Upstream `mcp-for-splunk/env.example` — `OPENAI_BASE_URL`, `AGENT_BRIDGE_MODEL`  
+- every accepted output parses as IR 1.0.0;
+- zero model-authored Python reaches compiler, import, or execution;
+- every accepted action, parameter, output, asset, and datapath survives
+  deterministic preflight;
+- repair stops within the configured maximum;
+- provider and validation failures return closed `GapReport` IDs;
+- the test run demonstrates zero unintended internet egress; and
+- the model/runtime/version/digest tuple is recorded as the qualified target.

@@ -10,6 +10,8 @@ export interface PatternDefinition {
   requires_confirm?: boolean;
   destructive_actions?: string[];
   org?: boolean;
+  trusted_ir?: boolean;
+  template_kind?: string;
 }
 
 export const FALLBACK_PATTERNS: PatternDefinition[] = [
@@ -92,11 +94,13 @@ export function patternsFromApiPayload(data: {
   by_category?: Record<string, Array<Record<string, unknown>>>;
   org_template_count?: number;
   org_errors?: string[];
+  org_warnings?: string[];
 }): {
   patterns: PatternDefinition[];
   byCategory: Record<string, PatternDefinition[]>;
   orgTemplateCount: number;
   orgErrors: string[];
+  orgWarnings: string[];
 } {
   const patterns: PatternDefinition[] = (data.patterns || []).map((row) => ({
     id: String(row.id),
@@ -111,6 +115,8 @@ export function patternsFromApiPayload(data: {
       ? row.destructive_actions.map(String)
       : [],
     org: Boolean(row.org),
+    trusted_ir: Boolean(row.trusted_ir),
+    template_kind: row.template_kind ? String(row.template_kind) : undefined,
   }));
   const byCategory: Record<string, PatternDefinition[]> = {};
   if (data.by_category) {
@@ -125,6 +131,8 @@ export function patternsFromApiPayload(data: {
         tier: row.tier ? String(row.tier) : undefined,
         requires_confirm: Boolean(row.requires_confirm),
         org: Boolean(row.org),
+        trusted_ir: Boolean(row.trusted_ir),
+        template_kind: row.template_kind ? String(row.template_kind) : undefined,
       }));
     }
   }
@@ -133,5 +141,8 @@ export function patternsFromApiPayload(data: {
     byCategory,
     orgTemplateCount: Number(data.org_template_count || 0),
     orgErrors: Array.isArray(data.org_errors) ? data.org_errors.map(String) : [],
+    orgWarnings: Array.isArray(data.org_warnings)
+      ? data.org_warnings.map(String)
+      : [],
   };
 }

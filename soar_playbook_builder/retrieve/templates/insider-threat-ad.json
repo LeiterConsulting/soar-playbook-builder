@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0.0",
+  "id": "insider-threat-ad",
+  "name": "Insider Threat Active Directory Disable",
+  "description": "Require analyst approval before disabling an Active Directory account.",
+  "entrypoint": "start",
+  "nodes": [
+    {"id": "start", "type": "start", "next": "approval"},
+    {"id": "approval", "type": "prompt", "message": "Approve disabling the Active Directory account?", "response_key": "approval", "choices": ["Approve", "Reject"], "on_success": "disable_account", "on_failure": "cancelled", "on_timeout": "timed_out"},
+    {"id": "disable_account", "type": "action", "app": "active_directory", "action": "disable account", "asset": {"kind": "asset_unbound"}, "parameters": {"username": {"kind": "datapath", "scope": "artifact", "path": ["cef", "destinationUserName"]}}, "on_success": "complete", "on_failure": "failed"},
+    {"id": "complete", "type": "end", "outcome": "success"},
+    {"id": "cancelled", "type": "end", "outcome": "neutral"},
+    {"id": "timed_out", "type": "end", "outcome": "neutral"},
+    {"id": "failed", "type": "end", "outcome": "failure"}
+  ],
+  "metadata": {"capability_index_version": "template-library-v1", "operating_mode": "restricted", "template_id": "insider-threat-ad", "labels": ["active_directory", "identity", "insider_threat"]}
+}

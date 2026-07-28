@@ -7,6 +7,18 @@ from typing import Any, Callable
 from builder_helpers import SCAFFOLDS, analyze_playbook
 from capability.index import index_status, load_baseline_apps
 from case_catalog import sample_ids
+from compiler import compile_playbook, parse_python_ir, parse_visual_ir
+from ir.fixtures import smoke_ir_document
+from ir.schema import PlaybookIR
+from retrieve import TemplateLibrary
+from trusted_review import ReviewContext, review_template
+from validate import preflight
+from validate.fixtures import (
+    FIXTURE_EVALUATED_AT,
+    qualified_smoke_document,
+    qualified_smoke_index,
+    qualified_smoke_ir,
+)
 
 
 def _check(
@@ -36,6 +48,26 @@ def run_self_test(
     """Run offline-safe checks; optional bridge_probe for MCP health."""
     checks: list[dict[str, Any]] = []
 
+    insecure_bridge = str(
+        cfg.get("mcp_bridge_allow_insecure_http") or ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    insecure_loopback = str(
+        cfg.get("soar_loopback_allow_insecure_tls") or ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    secure_transport = not insecure_bridge and not insecure_loopback
+    _check(
+        checks,
+        check_id="transport_security",
+        title="Transport security",
+        ok=secure_transport,
+        detail=(
+            "TLS verification and HTTPS policy enabled"
+            if secure_transport
+            else "Lab-only insecure transport override is enabled"
+        ),
+        severity="warn",
+    )
+
     cap = index_status()
     cap_ok = bool(cap.get("loaded")) and int(cap.get("app_count") or 0) >= 3
     _check(
@@ -60,6 +92,164 @@ def run_self_test(
         title="Baseline app catalog",
         ok=len(baseline) >= 3,
         detail=f"{len(baseline)} baseline apps shipped",
+    )
+
+    try:
+        compiler_ir = PlaybookIR.from_dict(smoke_ir_document())
+        artifacts = compile_playbook(compiler_ir)
+        compiler_ok = (
+            parse_python_ir(artifacts.python_source).sha256() == compiler_ir.sha256()
+            and parse_visual_ir(artifacts.visual).sha256() == compiler_ir.sha256()
+        )
+        compiler_detail = (
+            f"Dual artifact round-trip {compiler_ir.sha256()[:12]}"
+            if compiler_ok
+            else "Compiler artifact hash mismatch"
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        compiler_ok = False
+        compiler_detail = f"Compiler self-test failed: {type(exc).__name__}"
+    _check(
+        checks,
+        check_id="deterministic_compiler",
+        title="Deterministic compiler",
+        ok=compiler_ok,
+        detail=compiler_detail,
+    )
+
+    try:
+        clean_report = preflight(
+            qualified_smoke_ir(),
+            qualified_smoke_index(),
+            evaluated_at=FIXTURE_EVALUATED_AT,
+        )
+        bad_document = qualified_smoke_document()
+        bad_action = next(
+            node for node in bad_document["nodes"] if node["type"] == "action"
+        )
+        bad_action["asset"] = {"kind": "asset_unbound"}
+        bad_report = preflight(
+            PlaybookIR.from_dict(bad_document),
+            qualified_smoke_index(),
+            evaluated_at=FIXTURE_EVALUATED_AT,
+        )
+        validator_ok = (
+            clean_report.status == "ok"
+            and bad_report.status == "blocked"
+            and any(gap.id == "ASSET_UNBOUND" for gap in bad_report.gaps)
+        )
+        validator_detail = (
+            "Known-good accepted; known-bad asset blocked"
+            if validator_ok
+            else "Validator fixture outcome mismatch"
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        validator_ok = False
+        validator_detail = f"Validator self-test failed: {type(exc).__name__}"
+    _check(
+        checks,
+        check_id="deterministic_preflight",
+        title="Deterministic preflight",
+        ok=validator_ok,
+        detail=validator_detail,
+    )
+
+    try:
+        library = TemplateLibrary.load()
+        template_records = library.records
+        template_roundtrips = all(
+            parse_python_ir(
+                compile_playbook(record.ir).python_source
+            ).sha256()
+            == record.ir.sha256()
+            and parse_visual_ir(
+                compile_playbook(record.ir).visual
+            ).sha256()
+            == record.ir.sha256()
+            for record in template_records
+        )
+        templates_ok = len(template_records) == 11 and template_roundtrips
+        templates_detail = (
+            "11 canonical IR templates parsed and dual-compiled"
+            if templates_ok
+            else "Canonical IR template count or round-trip mismatch"
+        )
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        templates_ok = False
+        templates_detail = (
+            f"Canonical template self-test failed: {type(exc).__name__}"
+        )
+    _check(
+        checks,
+        check_id="canonical_ir_templates",
+        title="Canonical IR templates",
+        ok=templates_ok,
+        detail=templates_detail,
+    )
+
+    try:
+        review = review_template(
+            "hello",
+            qualified_smoke_index(),
+            context=ReviewContext(
+                operating_mode="air_gapped",
+                evaluated_at=FIXTURE_EVALUATED_AT,
+                generated_at=FIXTURE_EVALUATED_AT,
+                origin="template",
+            ),
+        )
+        review_lock_ok = (
+            review.get("status") == "success"
+            and review.get("review_only") is True
+            and review.get("import_enabled") is False
+            and review.get("ready_for_import") is False
+            and review.get("import_block_reason")
+            == "TRUSTED_IMPORT_DISABLED"
+        )
+        review_lock_detail = (
+            "Hello reviewed; trusted Import remains locked"
+            if review_lock_ok
+            else "Trusted review lock invariant failed"
+        )
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        review_lock_ok = False
+        review_lock_detail = (
+            f"Trusted review self-test failed: {type(exc).__name__}"
+        )
+    _check(
+        checks,
+        check_id="trusted_review_lock",
+        title="Trusted review safety lock",
+        ok=review_lock_ok,
+        detail=review_lock_detail,
+    )
+
+    from custom_templates import parse_org_templates
+
+    org_registry = parse_org_templates(
+        cfg.get("custom_templates_json"),
+        raw_ir_config=cfg.get("custom_ir_templates_json"),
+        allow_legacy_python=str(
+            cfg.get("allow_legacy_python_templates") or ""
+        ).strip().lower()
+        in {"1", "true", "yes", "on"},
+    )
+    org_templates_ok = not org_registry.errors
+    org_detail = (
+        f"{org_registry.count} strict/explicit organization templates loaded"
+        if org_templates_ok and not org_registry.warnings
+        else "; ".join(
+            [*org_registry.errors[:2], *org_registry.warnings[:2]]
+        )
+        or "Organization template configuration is valid"
+    )
+    _check(
+        checks,
+        check_id="organization_templates",
+        title="Organization template boundary",
+        ok=org_templates_ok and not org_registry.warnings,
+        detail=org_detail,
+        severity="warn",
     )
 
     hello = SCAFFOLDS.get("hello") or ""

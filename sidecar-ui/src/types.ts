@@ -47,8 +47,9 @@ export interface TroubleshootingEntry {
 export interface BuilderResponse {
   status?: string;
   error?: string;
+  error_code?: string;
+  correlation_id?: string;
   http_status?: number;
-  raw_body?: string;
   content?: string;
   message?: string;
   preview?: PreviewBlock[];
@@ -95,6 +96,8 @@ export interface BuilderResponse {
     tier?: string;
     requires_confirm?: boolean;
     destructive_actions?: string[];
+    trusted_ir?: boolean;
+    template_kind?: string;
   }>;
   by_category?: Record<
     string,
@@ -105,8 +108,13 @@ export interface BuilderResponse {
       integrations?: string[];
       tier?: string;
       requires_confirm?: boolean;
+      trusted_ir?: boolean;
+      template_kind?: string;
     }>
   >;
+  org_template_count?: number;
+  org_errors?: string[];
+  org_warnings?: string[];
   suggested_pattern?: string;
   wizard_scenario_id?: string;
   investigation_context?: InvestigationContext;
@@ -151,6 +159,31 @@ export interface BuilderResponse {
   passed?: number;
   blocking?: number;
   check_count?: number;
+  review_only?: boolean;
+  import_enabled?: boolean;
+  import_block_reason?: string;
+  compile_eligible?: boolean;
+  ready_for_import?: boolean;
+  review_id?: string;
+  ir_sha256?: string;
+  compiler_version?: string;
+  gap_report?: {
+    status?: "ok" | "degraded" | "blocked" | string;
+    gaps?: Array<{
+      id: string;
+      severity: string;
+      node?: string;
+      summary?: string;
+      remediation?: { steps?: string[] };
+    }>;
+  };
+  artifacts?: {
+    python_preview?: string;
+    python_sha256?: string;
+    visual_preview?: Record<string, unknown>;
+    visual_sha256?: string;
+    native_schema_status?: string;
+  };
 }
 
 export interface CaseSummary {

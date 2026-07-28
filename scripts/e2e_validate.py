@@ -37,7 +37,22 @@ except ImportError:
 Status = Literal["ok", "warn", "error", "skipped", "manual"]
 
 PLAYBOOK_BUILDER_APPID = "a7c3e891-4f2d-4b18-9e6a-1d5f8c2b0e47"
-MIN_APP_VERSION = (2, 7, 2)
+_SOURCE_MANIFEST = (
+    Path(__file__).resolve().parents[1]
+    / "soar_playbook_builder"
+    / "soar_playbook_builder.json"
+)
+try:
+    _SOURCE_VERSION_TEXT = str(
+        json.loads(_SOURCE_MANIFEST.read_text(encoding="utf-8"))[
+            "app_version"
+        ]
+    )
+    MIN_APP_VERSION = tuple(
+        int(part) for part in _SOURCE_VERSION_TEXT.split(".")
+    )
+except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+    MIN_APP_VERSION = (2, 26, 0)
 E2E_PLAYBOOK_PREFIX = "PB_E2E_"
 
 PHASE_IDS = (
@@ -122,8 +137,8 @@ def _soar_ui_links(ctx: E2EContext) -> dict[str, str]:
         "soar_playbooks": f"{base}/mission/#/playbooks",
         "soar_app_rest": f"{base}/rest/app",
         "sidecar": _handler_chat_url(ctx),
-        "sidecar_hello_scaffold": _handler_chat_url(ctx, "action=scaffold&pattern=hello"),
-        "sidecar_validate": _handler_chat_url(ctx, "action=validate&pattern=hello"),
+        "sidecar_hello_scaffold": f"{_handler_chat_url(ctx)}#/build",
+        "sidecar_validate": f"{_handler_chat_url(ctx)}#/build",
         "sidecar_bridge_status": _handler_chat_url(ctx, "action=bridge_status"),
         "mcp_health": _mcp_health_url(ctx.mcp_bridge_url),
     }
@@ -131,6 +146,8 @@ def _soar_ui_links(ctx: E2EContext) -> dict[str, str]:
 
 def _mcp_health_url(bridge: str) -> str:
     b = bridge.rstrip("/")
+    if not b:
+        return ""
     if b.endswith("/agent"):
         return b.rsplit("/agent", 1)[0] + "/agent/health"
     return f"{b}/health"
@@ -429,7 +446,11 @@ def _run_phase_sidecar(ctx: E2EContext, checks: list[E2ECheck], client: httpx.Cl
             manual_verify="Browser: sidecar shows Playbook Builder header and preview panels.",
         ))
 
-    data, err = _handler_get(ctx, client, "action=scaffold&pattern=hello")
+    data, err = _handler_post(
+        ctx,
+        client,
+        {"action": "scaffold", "pattern": "hello"},
+    )
     if err:
         ok = False
         _add(checks, E2ECheck(
@@ -456,7 +477,11 @@ def _run_phase_sidecar(ctx: E2EContext, checks: list[E2ECheck], client: httpx.Cl
         if not src:
             ok = False
 
-    data, err = _handler_get(ctx, client, "action=validate&pattern=hello")
+    data, err = _handler_post(
+        ctx,
+        client,
+        {"action": "validate", "pattern": "hello"},
+    )
     if err:
         ok = False
         _add(checks, E2ECheck(
@@ -908,7 +933,7 @@ def load_ctx_from_env(args: argparse.Namespace) -> E2EContext:
         soar_password=soar_password,
         verify_ssl=os.environ.get("SOAR_VERIFY_SSL", "false").lower() in ("1", "true", "yes"),
         asset_name=os.environ.get("PB_ASSET", os.environ.get("ASSET", "mcpbridge")).strip(),
-        mcp_bridge_url=os.environ.get("MCP_BRIDGE_URL", "http://127.0.0.1:8003/agent").strip(),
+        mcp_bridge_url=os.environ.get("MCP_BRIDGE_URL", "").strip(),
         mode=args.mode.upper() if args.mode else os.environ.get("E2E_MODE", "auto").upper(),
         skip_import=args.skip_import,
         cleanup_import=not args.no_cleanup,

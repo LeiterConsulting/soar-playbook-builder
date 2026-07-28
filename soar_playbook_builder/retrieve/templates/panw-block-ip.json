@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0.0",
+  "id": "panw-block-ip",
+  "name": "Palo Alto Block IP",
+  "description": "Require analyst approval before blocking an IP address through Palo Alto Networks.",
+  "entrypoint": "start",
+  "nodes": [
+    {"id": "start", "type": "start", "next": "approval"},
+    {"id": "approval", "type": "prompt", "message": "Approve blocking this destination IP?", "response_key": "approval", "choices": ["Approve", "Reject"], "on_success": "block_ip", "on_failure": "cancelled", "on_timeout": "timed_out"},
+    {"id": "block_ip", "type": "action", "app": "panw", "action": "block ip", "asset": {"kind": "asset_unbound"}, "parameters": {"ip": {"kind": "datapath", "scope": "artifact", "path": ["cef", "destinationAddress"]}}, "on_success": "complete", "on_failure": "failed"},
+    {"id": "complete", "type": "end", "outcome": "success"},
+    {"id": "cancelled", "type": "end", "outcome": "neutral"},
+    {"id": "timed_out", "type": "end", "outcome": "neutral"},
+    {"id": "failed", "type": "end", "outcome": "failure"}
+  ],
+  "metadata": {"capability_index_version": "template-library-v1", "operating_mode": "restricted", "template_id": "panw-block-ip", "labels": ["panw", "firewall", "block_ip"]}
+}

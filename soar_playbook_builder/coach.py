@@ -84,7 +84,8 @@ def coach_suggest_payload(
             [
                 "",
                 f"No catalog match for rule `{rule}` — use **Build** + Natural Language, "
-                "or add an org template (`custom_templates_json`).",
+                "or add a strict org IR template "
+                "(`custom_ir_templates_json`).",
             ]
         )
     else:
