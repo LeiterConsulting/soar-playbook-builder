@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SOAR Playbook Builder</title>
+  <style>
+    :root {
+      --bg: #12151a; --panel: #1c2128; --panel2: #252b33; --border: #3d4654;
+      --text: #e8eaed; --muted: #9aa0a6; --accent: #65a30d; --accent-dim: #3f6212;
+      --user-bg: #2d3748; --bot-bg: #1e293b;
+      --start: #2563eb; --collect: #7c3aed; --action: #ea580c;
+      --decision: #ca8a04; --end: #64748b;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); }
+    body { display: flex; flex-direction: column; }
+    header {
+      padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel);
+      display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; gap: 8px;
+    }
+    header h1 { margin: 0; font-size: 15px; font-weight: 600; }
+    .ctx { font-size: 11px; color: var(--muted); }
+    .layout { flex: 1; display: flex; min-height: 0; }
+    .left { flex: 1; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border); }
+    .right { width: 46%; min-width: 300px; display: flex; flex-direction: column; background: var(--panel); }
+    .steps { display: flex; gap: 4px; padding: 8px; overflow-x: auto; border-bottom: 1px solid var(--border); background: var(--panel2); flex-shrink: 0; }
+    .step { flex: 0 0 auto; padding: 6px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; border: 1px solid var(--border); color: var(--muted); background: transparent; }
+    .step.active { border-color: var(--accent); color: var(--text); background: var(--accent-dim); }
+    .step-num { font-weight: 700; color: var(--accent); margin-right: 4px; }
+    .step-hint { padding: 8px 12px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    #messages { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .msg { max-width: 96%; padding: 8px 10px; border-radius: 8px; font-size: 13px; line-height: 1.45; white-space: pre-wrap; }
+    .msg.user { align-self: flex-end; background: var(--user-bg); }
+    .msg.bot { align-self: flex-start; background: var(--bot-bg); border: 1px solid var(--border); }
+    footer { padding: 8px; border-top: 1px solid var(--border); background: var(--panel); flex-shrink: 0; }
+    .prompts { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+    .prompts button { background: var(--panel2); border: 1px solid var(--border); color: var(--muted); padding: 4px 8px; font-size: 11px; border-radius: 4px; cursor: pointer; text-align: left; }
+    .prompts button:hover { border-color: var(--accent); color: var(--text); }
+    .input-row { display: flex; gap: 6px; }
+    textarea { flex: 1; resize: none; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); padding: 8px; font-size: 13px; min-height: 40px; }
+    .btn { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 6px 12px; font-weight: 600; cursor: pointer; font-size: 12px; text-decoration: none; display: inline-flex; align-items: center; }
+    .btn.secondary { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+    .btn.linkish { background: #1e3a5f; border: 1px solid #2563eb; color: #bfdbfe; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .preview-head { padding: 8px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .preview-head-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .preview-head h2 { margin: 0; font-size: 13px; }
+    .pattern-select { font-size: 11px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px; }
+    .preview-tabs { display: flex; gap: 4px; }
+    .preview-tab { padding: 4px 10px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; }
+    .preview-tab.active { background: var(--accent-dim); border-color: var(--accent); color: var(--text); }
+    .soar-links { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: #0f172a; flex-shrink: 0; }
+    .soar-links .sync-ok { color: #86efac; font-size: 10px; width: 100%; }
+    .soar-links .sync-err { color: #fca5a5; font-size: 10px; width: 100%; }
+    .preview-panel { flex: 1; min-height: 0; overflow: auto; display: none; }
+    .preview-panel.active { display: block; }
+    #preview-flow { padding: 12px; }
+    .vpe-block { display: flex; flex-direction: column; align-items: center; margin-bottom: 0; }
+    .vpe-card {
+      width: 92%; max-width: 280px; border-radius: 8px; border: 2px solid var(--border);
+      background: var(--panel2); padding: 8px 10px; text-align: center; position: relative;
+    }
+    .vpe-card.start { border-color: var(--start); }
+    .vpe-card.collect { border-color: var(--collect); }
+    .vpe-card.action { border-color: var(--action); }
+    .vpe-card.decision { border-color: var(--decision); transform: rotate(0deg); border-radius: 4px; }
+    .vpe-card.end { border-color: var(--end); }
+    .vpe-card .type-pill { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.85; }
+    .vpe-card .title { font-size: 12px; font-weight: 600; margin-top: 4px; }
+    .vpe-card .detail { font-size: 10px; color: var(--muted); margin-top: 4px; word-break: break-word; }
+    .vpe-card .app-badge { font-size: 9px; margin-top: 6px; display: inline-block; padding: 2px 6px; border-radius: 999px; background: #1e293b; color: #93c5fd; }
+    .vpe-connector { width: 2px; height: 18px; background: var(--border); }
+    #preview-diagram { padding: 12px; min-height: 200px; }
+    #preview-diagram .mermaid { background: transparent; }
+    #preview-story { padding: 12px; }
+    .story-lane { margin-bottom: 10px; border-left: 3px solid var(--accent); padding-left: 10px; }
+    .story-lane .lane-name { font-size: 10px; font-weight: 700; color: var(--accent); text-transform: uppercase; }
+    .story-lane .lane-title { font-size: 12px; font-weight: 600; margin-top: 2px; }
+    .story-lane .lane-detail { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    #preview-code { margin: 0; padding: 10px 12px; overflow: auto; font-size: 11px; line-height: 1.4; background: #0d1117; color: #c9d1d9; font-family: ui-monospace, monospace; height: 100%; }
+    .preview-foot { padding: 8px 12px; border-top: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; flex-shrink: 0; }
+    .banner { display: none; background: #422006; color: #fef3c7; padding: 6px 12px; font-size: 11px; }
+    .banner.show { display: block; }
+    .score { font-size: 11px; color: var(--accent); margin-left: auto; }
+    .btn.busy { opacity: 0.7; pointer-events: none; }
+    #preview-diagram svg { width: 100%; height: auto; min-height: 200px; }
+    .diag-node { fill: #252b33; stroke: #3d4654; stroke-width: 2; }
+    .diag-node.start { stroke: #2563eb; }
+    .diag-node.collect { stroke: #7c3aed; }
+    .diag-node.action { stroke: #ea580c; }
+    .diag-node.decision { stroke: #ca8a04; }
+    .diag-node.end { stroke: #64748b; }
+    .diag-text { fill: #e8eaed; font-size: 11px; font-family: system-ui, sans-serif; }
+    .diag-sub { fill: #9aa0a6; font-size: 9px; }
+    .diag-line { stroke: #64748b; stroke-width: 2; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>SOAR Playbook Builder</h1>
+    <div class="ctx" id="ctx-label">{{AI_INSTRUCTIONS}}</div>
+  </header>
+  <div class="banner" id="vpe-banner">Playbook changed — refresh Visual Playbook Editor</div>
+  <div class="layout">
+    <div class="left">
+      <div class="steps" id="steps"></div>
+      <div class="step-hint" id="step-hint">Describe a playbook in plain language or pick a step.</div>
+      <div id="messages"></div>
+      <footer>
+        <div class="prompts" id="prompts"></div>
+        <div class="input-row">
+          <textarea id="input" placeholder="Build a ClearPass quarantine playbook when risk >= 70…" rows="2"></textarea>
+          <button type="button" class="btn" id="send">Send</button>
+        </div>
+      </footer>
+    </div>
+    <div class="right">
+      <div class="preview-head">
+        <div class="preview-head-row">
+          <h2>Workflow preview</h2>
+          <select class="pattern-select" id="pattern-select">
+            <option value="hello">Hello World</option>
+            <option value="clearpass-quarantine">Aruba ClearPass Quarantine</option>
+            <option value="es-notable-response">ES Notable Response</option>
+            <option value="indicator-enrichment">Indicator Enrichment</option>
+          </select>
+        </div>
+        <div class="preview-tabs">
+          <button type="button" class="preview-tab active" data-tab="blocks">Blocks</button>
+          <button type="button" class="preview-tab" data-tab="diagram">Diagram</button>
+          <button type="button" class="preview-tab" data-tab="story">Story</button>
+          <button type="button" class="preview-tab" data-tab="code">Code</button>
+        </div>
+      </div>
+      <div class="soar-links" id="soar-links">
+        <span class="hint" id="soar-links-hint">Build a playbook, then sync to SOAR</span>
+        <span class="sync-ok" id="sync-ok" style="display:none"></span>
+        <span class="sync-err" id="sync-err" style="display:none"></span>
+        <button type="button" class="btn" id="import-btn" title="Import draft into SOAR">Import to SOAR</button>
+        <a class="btn linkish" id="link-open-soar" href="#" target="_blank" rel="noopener noreferrer">Open in SOAR</a>
+        <a class="btn secondary" id="link-playbooks" href="#" target="_blank" rel="noopener noreferrer">All Playbooks</a>
+      </div>
+      <div id="panel-blocks" class="preview-panel active"><div id="preview-flow"></div></div>
+      <div id="panel-diagram" class="preview-panel"><div id="preview-diagram"></div></div>
+      <div id="panel-story" class="preview-panel"><div id="preview-story"></div></div>
+      <div id="panel-code" class="preview-panel"><pre id="preview-code"># Describe or generate a playbook to see preview</pre></div>
+      <div class="preview-foot">
+        <button type="button" class="btn secondary" id="scaffold-btn">Generate template</button>
+        <button type="button" class="btn secondary" id="validate-btn">Validate</button>
+        <button type="button" class="btn secondary" id="poll-btn">Poll VPE</button>
+        <span class="score" id="score-label"></span>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const params = new URLSearchParams(window.location.search);
+      const handlerBase = window.location.pathname.replace(/\/chat.*$/, "");
+      const api = handlerBase + "/chat";
+      const contextPlaybookId = params.get("playbook_id") || "";
+      const containerId = params.get("container_id") || "";
+      const origin = window.location.origin;
+      const sendBtn = document.getElementById("send");
+      const importBtn = document.getElementById("import-btn");
+
+      let linkedPlaybookId = "";
+      let linkedPlaybookName = "";
+      let draftLabel = "";
+
+      let steps = [], activeStep = 0, currentPattern = "hello", currentSource = "";
+      let lastVisual = { preview: [], storyboard: [], soar_links: null };
+      let activePreviewTab = "blocks";
+      let busy = false;
+      let draftReady = false;
+
+      const messages = document.getElementById("messages");
+      const input = document.getElementById("input");
+      const previewFlow = document.getElementById("preview-flow");
+      const previewDiagram = document.getElementById("preview-diagram");
+      const previewStory = document.getElementById("preview-story");
+      const previewCode = document.getElementById("preview-code");
+      const scoreLabel = document.getElementById("score-label");
+      const ctxLabel = document.getElementById("ctx-label");
+      const instructions = ctxLabel.textContent.trim();
+
+      function playbookOpenUrl() {
+        return linkedPlaybookId ? (origin + "/playbook/" + linkedPlaybookId) : "#";
+      }
+
+      function setSyncStatus(ok, message) {
+        const okEl = document.getElementById("sync-ok");
+        const errEl = document.getElementById("sync-err");
+        okEl.style.display = ok ? "block" : "none";
+        errEl.style.display = ok ? "none" : "block";
+        if (ok) {
+          okEl.textContent = message || "";
+          errEl.textContent = "";
+        } else {
+          errEl.textContent = message || "";
+          okEl.textContent = "";
+        }
+      }
+
+      function updateSoarLinks() {
+        const linkOpen = document.getElementById("link-open-soar");
+        const list = origin + "/playbooks";
+        document.getElementById("link-playbooks").href = list;
+        const hint = document.getElementById("soar-links-hint");
+        if (linkedPlaybookId) {
+          const href = playbookOpenUrl();
+          linkOpen.href = href;
+          const name = linkedPlaybookName || ("id " + linkedPlaybookId);
+          hint.textContent = "Synced playbook ready";
+          linkOpen.title = "Open " + name + " in SOAR Visual Editor";
+          linkOpen.classList.remove("secondary");
+          linkOpen.classList.add("linkish");
+        } else {
+          linkOpen.href = "#";
+          hint.textContent = draftReady
+            ? "Draft ready — click Import to SOAR (sends source from preview)"
+            : "Build a playbook first";
+          linkOpen.title = "Import/sync to SOAR first";
+          linkOpen.classList.add("secondary");
+          linkOpen.classList.remove("linkish");
+        }
+        importBtn.disabled = !draftReady || busy;
+        importBtn.title = draftReady
+          ? "Import the Code-tab source into SOAR"
+          : "Generate or build a playbook first";
+      }
+
+      function setLinkedPlaybook(id, name) {
+        linkedPlaybookId = String(id);
+        linkedPlaybookName = name || linkedPlaybookName || "";
+        const u = new URL(window.location.href);
+        u.searchParams.set("playbook_id", linkedPlaybookId);
+        window.history.replaceState({}, "", u.toString());
+        setSyncStatus(
+          true,
+          "✓ Synced: " + linkedPlaybookName + " (id " + linkedPlaybookId + ")"
+        );
+        updateSoarLinks();
+        updateCtx();
+      }
+
+      function updateCtx() {
+        const bits = [];
+        if (linkedPlaybookId) bits.push("pb " + linkedPlaybookId);
+        else if (contextPlaybookId) bits.push("ctx pb " + contextPlaybookId + " (ignored for links)");
+        if (containerId) bits.push("case " + containerId);
+        ctxLabel.textContent = bits.length
+          ? bits.join(" · ") + (instructions ? " — " + instructions : "")
+          : instructions || "Builder sidecar";
+        updateSoarLinks();
+      }
+
+      function addMsg(text, role) {
+        const el = document.createElement("div");
+        el.className = "msg " + role;
+        el.textContent = text;
+        messages.appendChild(el);
+        messages.scrollTop = messages.scrollHeight;
+      }
+
+      function selectPreviewTab(name) {
+        activePreviewTab = name;
+        document.querySelectorAll(".preview-tab").forEach((t) => {
+          t.classList.toggle("active", t.dataset.tab === name);
+        });
+        document.querySelectorAll(".preview-panel").forEach((p) => {
+          p.classList.toggle("active", p.id === "panel-" + name);
+        });
+        if (name === "diagram") renderDiagramSvg(lastVisual.preview);
+      }
+
+      document.querySelectorAll(".preview-tab").forEach((btn) => {
+        btn.onclick = () => selectPreviewTab(btn.dataset.tab);
+      });
+
+      function renderVpeBlocks(preview) {
+        previewFlow.innerHTML = "";
+        (preview || []).forEach((b) => {
+          const wrap = document.createElement("div");
+          wrap.className = "vpe-block";
+          const card = document.createElement("div");
+          card.className = "vpe-card " + (b.type || "action");
+          let appHtml = b.app_label || b.app
+            ? '<div class="app-badge">' + (b.app_label || b.app) + "</div>"
+            : "";
+          card.innerHTML =
+            '<div class="type-pill">' + (b.type || "step") + "</div>" +
+            '<div class="title">' + (b.label || "Step") + "</div>" +
+            '<div class="detail">' + (b.detail || "") + "</div>" + appHtml;
+          wrap.appendChild(card);
+          previewFlow.appendChild(wrap);
+          if (b !== preview[preview.length - 1]) {
+            const line = document.createElement("div");
+            line.className = "vpe-connector";
+            previewFlow.appendChild(line);
+          }
+        });
+      }
+
+      function renderDiagramSvg(preview) {
+        previewDiagram.innerHTML = "";
+        if (!preview || !preview.length) {
+          previewDiagram.textContent = "Generate a playbook to see the flow diagram.";
+          return;
+        }
+        const w = 260;
+        const h = 72;
+        const gap = 16;
+        const totalH = preview.length * (h + gap) + 20;
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 " + w + " " + totalH);
+        svg.setAttribute("role", "img");
+        preview.forEach((b, i) => {
+          const y = 10 + i * (h + gap);
+          const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+          rect.setAttribute("x", "10");
+          rect.setAttribute("y", String(y));
+          rect.setAttribute("width", String(w - 20));
+          rect.setAttribute("height", String(h));
+          rect.setAttribute("rx", "8");
+          rect.setAttribute("class", "diag-node " + (b.type || "action"));
+          svg.appendChild(rect);
+          const t1 = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          t1.setAttribute("x", "20");
+          t1.setAttribute("y", String(y + 22));
+          t1.setAttribute("class", "diag-text");
+          t1.textContent = (b.label || b.type || "Step");
+          svg.appendChild(t1);
+          const t2 = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          t2.setAttribute("x", "20");
+          t2.setAttribute("y", String(y + 40));
+          t2.setAttribute("class", "diag-sub");
+          t2.textContent = ((b.detail || "") + "").slice(0, 42);
+          svg.appendChild(t2);
+          if (b.app_label || b.app) {
+            const t3 = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            t3.setAttribute("x", "20");
+            t3.setAttribute("y", String(y + 58));
+            t3.setAttribute("class", "diag-sub");
+            t3.textContent = b.app_label || b.app;
+            svg.appendChild(t3);
+          }
+          if (i < preview.length - 1) {
+            const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            line.setAttribute("x1", String(w / 2));
+            line.setAttribute("y1", String(y + h));
+            line.setAttribute("x2", String(w / 2));
+            line.setAttribute("y2", String(y + h + gap));
+            line.setAttribute("class", "diag-line");
+            svg.appendChild(line);
+          }
+        });
+        previewDiagram.appendChild(svg);
+      }
+
+      function renderStoryboard(storyboard) {
+        previewStory.innerHTML = "";
+        (storyboard || []).forEach((s) => {
+          const lane = document.createElement("div");
+          lane.className = "story-lane";
+          lane.innerHTML =
+            '<div class="lane-name">' + (s.lane || "SOAR") + "</div>" +
+            '<div class="lane-title">' + (s.title || "") + "</div>" +
+            '<div class="lane-detail">' + (s.detail || "") + "</div>";
+          previewStory.appendChild(lane);
+        });
+      }
+
+      function renderPreview(data) {
+        const preview = data.preview || [];
+        const source = data.source || "";
+        const analysis = data.analysis || null;
+        lastVisual = {
+          preview: preview,
+          storyboard: data.storyboard || [],
+          soar_links: data.soar_links || null,
+        };
+        renderVpeBlocks(preview);
+        renderStoryboard(lastVisual.storyboard);
+        if (activePreviewTab === "diagram") renderDiagramSvg(preview);
+        if (source) {
+          currentSource = source;
+          previewCode.textContent = source;
+          draftReady = true;
+        }
+        if (data.draft_ready) draftReady = true;
+        if (data.pattern_label) draftLabel = data.pattern_label;
+        if (analysis) scoreLabel.textContent = "Score " + analysis.score + "/100";
+        if (data.playbook_id) {
+          const name = data.playbook_name || data.pattern_label || draftLabel || linkedPlaybookName;
+          setLinkedPlaybook(data.playbook_id, name);
+        } else {
+          updateSoarLinks();
+        }
+        if (data.import_error) {
+          setSyncStatus(false, "Sync failed: " + data.import_error);
+          addMsg("SOAR sync failed:\n" + data.import_error, "bot");
+        }
+      }
+
+      function setBusy(on) {
+        busy = on;
+        sendBtn.classList.toggle("busy", on);
+        sendBtn.textContent = on ? "Sending…" : "Send";
+        updateSoarLinks();
+      }
+
+      async function apiPost(body) {
+        const ctrl = new AbortController();
+        const timer = setTimeout(function () { ctrl.abort(); }, 60000);
+        try {
+          const res = await fetch(api, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            signal: ctrl.signal,
+          });
+          clearTimeout(timer);
+          const text = await res.text();
+          try {
+            return JSON.parse(text);
+          } catch (parseErr) {
+            return {
+              status: "error",
+              error: "Invalid response from SOAR (" + res.status + "): " + text.slice(0, 200),
+            };
+          }
+        } catch (e) {
+          clearTimeout(timer);
+          if (e.name === "AbortError") {
+            return { status: "error", error: "Import timed out after 60s" };
+          }
+          throw e;
+        }
+      }
+
+      async function apiGet(qs) {
+        const q = new URLSearchParams(qs);
+        if (currentPattern) q.set("pattern", currentPattern);
+        if (linkedPlaybookId && (qs.poll || qs.action === "preview")) {
+          q.set("playbook_id", linkedPlaybookId);
+        } else if (qs.action === "preview" && contextPlaybookId) {
+          q.set("playbook_id", contextPlaybookId);
+        }
+        const ctrl = new AbortController();
+        const timer = setTimeout(function () { ctrl.abort(); }, 25000);
+        try {
+          const res = await fetch(api + "?" + q.toString(), {
+            credentials: "same-origin",
+            signal: ctrl.signal,
+          });
+          clearTimeout(timer);
+          const text = await res.text();
+          try {
+            return JSON.parse(text);
+          } catch (parseErr) {
+            return { status: "error", error: "Invalid response from SOAR (" + res.status + ")" };
+          }
+        } catch (e) {
+          clearTimeout(timer);
+          if (e.name === "AbortError") {
+            return { status: "error", error: "Request timed out — check MCP tunnel or use Generate template." };
+          }
+          throw e;
+        }
+      }
+
+      function applyResponse(data) {
+        if (!data) return;
+        if (data.status === "error" && data.error) {
+          setSyncStatus(false, data.error);
+          addMsg(data.error, "bot");
+          if (data.import_attempts) {
+            addMsg("Import attempts:\n" + data.import_attempts.join("\n"), "bot");
+          }
+          return;
+        }
+        if (data.preview || data.source) renderPreview(data);
+        if (data.pattern) {
+          currentPattern = data.pattern;
+          document.getElementById("pattern-select").value = data.pattern;
+        }
+        const text = data.content;
+        if (text) addMsg(text, "bot");
+      }
+
+      async function sendMessage(text) {
+        const msg = (text || input.value).trim();
+        if (!msg || busy) return;
+        addMsg(msg, "user");
+        input.value = "";
+        setBusy(true);
+        try {
+          applyResponse(await apiGet({ message: msg }));
+        } catch (e) {
+          addMsg("Error: " + e, "bot");
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      function renderSteps() {
+        const stepsEl = document.getElementById("steps");
+        stepsEl.innerHTML = "";
+        steps.forEach((s, i) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "step" + (i === activeStep ? " active" : "");
+          btn.innerHTML = '<span class="step-num">' + (i + 1) + "</span>" + s.title;
+          btn.onclick = () => {
+            activeStep = i;
+            renderSteps();
+            renderPrompts();
+            if (steps[i]) document.getElementById("step-hint").textContent = steps[i].summary;
+          };
+          stepsEl.appendChild(btn);
+        });
+      }
+
+      function renderPrompts() {
+        const promptsEl = document.getElementById("prompts");
+        promptsEl.innerHTML = "";
+        ((steps[activeStep] && steps[activeStep].prompts) || []).forEach((p) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.textContent = p;
+          b.onclick = () => sendMessage(p);
+          promptsEl.appendChild(b);
+        });
+      }
+
+      async function loadSteps() {
+        try {
+          const data = await apiGet({ action: "steps" });
+          steps = data.steps || [];
+          renderSteps();
+          renderPrompts();
+        } catch (e) {
+          document.getElementById("step-hint").textContent = "Could not load builder steps.";
+        }
+      }
+
+      document.getElementById("pattern-select").onchange = (e) => { currentPattern = e.target.value; };
+      document.getElementById("scaffold-btn").onclick = async () => {
+        try { applyResponse(await apiGet({ action: "scaffold", pattern: currentPattern })); }
+        catch (e) { addMsg("Generate error: " + e, "bot"); }
+      };
+      document.getElementById("validate-btn").onclick = async () => {
+        try { applyResponse(await apiGet({ action: "validate", pattern: currentPattern })); }
+        catch (e) { addMsg("Validate error: " + e, "bot"); }
+      };
+      document.getElementById("send").onclick = () => sendMessage();
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+      });
+      importBtn.onclick = async () => {
+        if (!draftReady || !currentSource || busy) {
+          addMsg("Build or generate a playbook first, then Import to SOAR.", "bot");
+          return;
+        }
+        setBusy(true);
+        importBtn.classList.add("busy");
+        importBtn.textContent = "Importing…";
+        setSyncStatus(false, "Importing to SOAR…");
+        try {
+          const data = await apiPost({
+            action: "import_draft",
+            confirm: true,
+            source: currentSource,
+            name: draftLabel || linkedPlaybookName || "NL Draft Playbook",
+            pattern: currentPattern,
+          });
+          applyResponse(data);
+        } catch (e) {
+          setSyncStatus(false, "Import failed: " + e);
+          addMsg("Import failed: " + e, "bot");
+        } finally {
+          setBusy(false);
+          importBtn.classList.remove("busy");
+          importBtn.textContent = "Import to SOAR";
+          updateSoarLinks();
+        }
+      };
+
+      document.getElementById("link-open-soar").addEventListener("click", (e) => {
+        if (!linkedPlaybookId) {
+          e.preventDefault();
+          addMsg("Import to SOAR first — Open in SOAR uses the synced playbook id, not the old URL.", "bot");
+        }
+      });
+
+      async function checkBridgeStatus() {
+        try {
+          const data = await apiGet({ action: "bridge_status" });
+          if (data.reachable) {
+            ctxLabel.textContent = (ctxLabel.textContent.split(" — MCP")[0] || ctxLabel.textContent)
+              + " — MCP bridge OK";
+            return;
+          }
+          addMsg(
+            "MCP bridge not reachable from SOAR.\n\n"
+            + (data.error || "unknown error")
+            + "\n\n"
+            + (data.hint || "Check tunnel + asset mcp_bridge_url."),
+            "bot"
+          );
+        } catch (e) { /* optional */ }
+      }
+
+      document.getElementById("poll-btn").onclick = async () => {
+        if (!linkedPlaybookId) {
+          addMsg("Build/sync a playbook first — Open links use your NL-built playbook.", "bot");
+          return;
+        }
+        try {
+          const data = await apiGet({ poll: "1", playbook_id: linkedPlaybookId });
+          document.getElementById("vpe-banner").classList.toggle("show", !!data.changed);
+          addMsg(JSON.stringify(data, null, 2), "bot");
+        } catch (e) { addMsg("Poll failed: " + e, "bot"); }
+      };
+
+      updateCtx();
+      loadSteps().then(async () => {
+        checkBridgeStatus();
+        addMsg(
+          "Describe a playbook in plain language — preview updates in Blocks, Diagram, and Story tabs.\n\n" +
+          "Example: Build a Palo Alto block IP playbook\n\n" +
+          "After build, click Import to SOAR — then Open in SOAR opens your playbook (not ?playbook_id= from URL).",
+          "bot"
+        );
+        try { applyResponse(await apiGet({ action: "scaffold", pattern: "clearpass-quarantine" })); }
+        catch (e) { /* ignore */ }
+        if (contextPlaybookId && !linkedPlaybookId) {
+          addMsg(
+            "Note: sidecar URL has ?playbook_id=" + contextPlaybookId +
+            " (ignored for Open in SOAR). Import your built draft to link the correct playbook.",
+            "bot"
+          );
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

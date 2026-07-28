@@ -1,0 +1,31 @@
+dist/
+*.tgz
+
+# Sidecar UI
+sidecar-ui/node_modules/
+sidecar-ui/dist/
+sidecar-ui/.env.local
+
+# Validation console
+validation-console/node_modules/
+validation-console/dist/
+
+# Local / E2E secrets
+scripts/env.e2e.local
+.env
+.env.local
+.env.secrets
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# macOS
+.DS_Store
+._*
+
+# IDE
+.idea/
+.vscode/

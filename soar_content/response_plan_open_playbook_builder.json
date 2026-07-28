@@ -1,0 +1,44 @@
+{
+  "name": "ES Notable — Open Playbook Builder",
+  "description": "When ES exports a notable to SOAR, run the Open Playbook Builder utility playbook so analysts get a case note with the sidecar link.",
+  "enabled": true,
+  "comments": [
+    "Manual setup in SOAR UI (recommended):",
+    "  1. Import dist/open_playbook_builder.tgz",
+    "  2. Administration → Response Plans → Add",
+    "  3. Name: ES Notable — Open Playbook Builder",
+    "  4. Trigger: Container created",
+    "  5. Condition: label contains es_notable_response OR label contains notable (match your ES export label)",
+    "  6. Action: Run playbook → Open Playbook Builder",
+    "",
+    "Optional REST (SOAR 6.x+): POST /rest/response_plan with your session — field names vary by version.",
+    "Verify with: Administration → Response Plans after import."
+  ],
+  "trigger": {
+    "type": "container_created",
+    "conditions": [
+      {
+        "field": "label",
+        "operator": "contains",
+        "value": "es_notable_response"
+      }
+    ]
+  },
+  "actions": [
+    {
+      "type": "run_playbook",
+      "playbook_label": "open_playbook_builder",
+      "playbook_name": "Open Playbook Builder",
+      "run_mode": "automatic",
+      "notes": "Adds case note with get sidecar url link (container_id + ES artifact hints)"
+    }
+  ],
+  "es_export_prerequisite": {
+    "summary": "ES must export notables to SOAR with a matching container label",
+    "steps": [
+      "Splunk ES → Configure → Incident Review → Splunk SOAR Integration",
+      "Enable export; set playbook/response label to es_notable_response (or update condition above)",
+      "Confirm new cases appear in SOAR with CEF artifacts including event_id"
+    ]
+  }
+}

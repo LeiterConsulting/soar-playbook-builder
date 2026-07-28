@@ -1,0 +1,49 @@
+# Release SOAR app package — wts408/soar-playbook-builder
+# Tag: v2.26.0 → GitHub Release with soar_playbook_builder.tgz
+
+name: Release SOAR app package
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-tgz:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: sidecar-ui/package-lock.json
+
+      - name: Build soar_playbook_builder.tgz
+        run: |
+          chmod +x ./package_app.sh
+          ./package_app.sh
+          ls -la dist/
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: soar_playbook_builder
+          path: dist/soar_playbook_builder.tgz
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/soar_playbook_builder.tgz
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

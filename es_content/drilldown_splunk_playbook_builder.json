@@ -1,0 +1,12 @@
+{
+  "name": "Open Playbook Builder (Splunk)",
+  "description": "Deep-link from Splunk Enterprise dashboards/alerts to SOAR Response Coach. Replace SOAR_HOST, DIRECTORY, ASSET.",
+  "type": "link",
+  "link.url": "https://SOAR_HOST/rest/handler/DIRECTORY/ASSET/splunk_link?rule_name=$name$&src=$src$&mode=coach",
+  "link.target": "_blank",
+  "eai:acl": {
+    "app": "search",
+    "owner": "nobody",
+    "sharing": "app"
+  }
+}

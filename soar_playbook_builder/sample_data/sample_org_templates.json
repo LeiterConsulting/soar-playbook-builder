@@ -1,0 +1,14 @@
+{
+  "templates": [
+    {
+      "id": "org-demo-note",
+      "label": "Org Demo — Add Case Note",
+      "category": "Organization",
+      "description": "Minimal org template example. Copy into custom_templates_json on the Playbook Builder asset.",
+      "tier": "safe",
+      "integrations": [],
+      "nl_keywords": ["org demo note", "add org note"],
+      "source": "import phantom.app as phantom\n\ndef on_start(container):\n    phantom.add_note(\n        container=container,\n        content='Example org template — customize source for your workflow.',\n        title='Org template',\n    )\n    on_finish(container)\n\ndef on_finish(container):\n    phantom.debug('org-demo-note done')\n"
+    }
+  ]
+}

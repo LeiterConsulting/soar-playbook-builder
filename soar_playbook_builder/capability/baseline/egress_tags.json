@@ -1,0 +1,38 @@
+{
+  "version": "1.0.0",
+  "actions": {
+    "phantom": {
+      "add note": "false",
+      "set severity": "false",
+      "add list": "false",
+      "run playbook": "false"
+    },
+    "servicenow": {
+      "create ticket": "true",
+      "update ticket": "true"
+    },
+    "slack": {
+      "send message": "true"
+    },
+    "pagerduty": {
+      "create incident": "true"
+    },
+    "microsoft_teams": {
+      "post message": "true"
+    },
+    "virustotalv3": {
+      "file reputation": "true",
+      "domain reputation": "true"
+    }
+  },
+  "substitutions": {
+    "virustotalv3:file reputation": {
+      "offline_equivalent": {"app": "phantom", "action": "add list"},
+      "note": "Use a local threat-intel custom list lookup instead of external reputation API."
+    },
+    "virustotalv3:domain reputation": {
+      "offline_equivalent": {"app": "phantom", "action": "add list"},
+      "note": "Use a local domain deny/allow custom list instead of external reputation API."
+    }
+  }
+}

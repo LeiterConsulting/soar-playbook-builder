@@ -1,0 +1,12 @@
+{
+  "name": "Open Playbook Builder",
+  "description": "Deep-link from ES notables to SOAR Playbook Builder. Replace SOAR_HOST, DIRECTORY, and ASSET before deploy.",
+  "type": "link",
+  "link.url": "https://SOAR_HOST/rest/handler/DIRECTORY/ASSET/es_link?event_id=$event_id$&rule_name=$rule_name$&mode=coach",
+  "link.target": "_blank",
+  "eai:acl": {
+    "app": "SplunkEnterpriseSecuritySuite",
+    "owner": "nobody",
+    "sharing": "app"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "version": "1.0.0",
+  "fields": [
+    {"name": "destinationAddress", "contains": ["ip"], "label": "Destination IP"},
+    {"name": "sourceAddress", "contains": ["ip"], "label": "Source IP"},
+    {"name": "fileHash", "contains": ["hash"], "label": "File Hash"},
+    {"name": "fileHashMd5", "contains": ["hash"], "label": "MD5 Hash"},
+    {"name": "fileHashSha256", "contains": ["hash"], "label": "SHA256 Hash"},
+    {"name": "requestURL", "contains": ["url"], "label": "Request URL"},
+    {"name": "destinationDnsDomain", "contains": ["domain"], "label": "Destination Domain"},
+    {"name": "sourceDnsDomain", "contains": ["domain"], "label": "Source Domain"},
+    {"name": "deviceCustomString1", "contains": ["string"], "label": "Custom String 1"},
+    {"name": "deviceCustomString2", "contains": ["string"], "label": "Custom String 2"},
+    {"name": "severity", "contains": ["severity"], "label": "Severity"},
+    {"name": "message", "contains": ["string"], "label": "Message"},
+    {"name": "user", "contains": ["username"], "label": "Username"},
+    {"name": "sourceUserName", "contains": ["username"], "label": "Source Username"},
+    {"name": "destinationUserName", "contains": ["username"], "label": "Destination Username"}
+  ]
+}

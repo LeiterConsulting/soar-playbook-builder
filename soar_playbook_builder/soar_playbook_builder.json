@@ -1,0 +1,309 @@
+{
+    "appid": "a7c3e891-4f2d-4b18-9e6a-1d5f8c2b0e47",
+    "name": "SOAR Playbook Builder",
+    "description": "Guided playbook authoring for Splunk SOAR: template and ES-oriented scaffolds, block-flow preview, Python validation, Visual Playbook Editor import and sync, and optional natural-language drafting via an external MCP agent bridge.",
+    "type": "information service",
+    "publisher": "Community",
+    "license": "Apache 2.0",
+    "app_version": "2.26.0",
+    "utctime_updated": "2026-07-28T13:00:00.000000Z",
+    "package_name": "soar_playbook_builder",
+    "main_module": "playbook_builder_connector.py",
+    "min_phantom_version": "8.5.0",
+    "python_version": "3.13",
+    "logo": "logo.png",
+    "logo_dark": "logo_dark.png",
+    "product_vendor": "Splunk",
+    "product_name": "SOAR Playbook Builder",
+    "product_version_regex": ".*",
+    "rest_handler": "playbook_builder_connector.handle_request",
+    "configuration": {
+        "mcp_bridge_url": {
+            "description": "MCP agent bridge base URL (e.g. http://10.0.0.5:8003/agent)",
+            "data_type": "string",
+            "required": false,
+            "default": "http://localhost:8003/agent",
+            "order": 0
+        },
+        "ai_instructions": {
+            "description": "SOC context shown in the playbook builder sidecar header",
+            "data_type": "string",
+            "required": false,
+            "default": "Describe playbooks in plain language — preview, validate, and import into SOAR",
+            "order": 1
+        },
+        "soar_rest_token": {
+            "description": "Optional SOAR REST API token (ph-auth-token) for sidecar import when browser session loopback fails. Create under Administration → Users → Authentication for REST API.",
+            "data_type": "string",
+            "required": false,
+            "order": 2
+        },
+        "phenv_use_sudo": {
+            "description": "Run phenv via sudo when auto-upgrading Python 2.7 playbooks (recommended on SOAR 6.x). Set false only if phenv runs without sudo.",
+            "data_type": "string",
+            "required": false,
+            "default": "true",
+            "order": 3
+        },
+        "phenv_path": {
+            "description": "Optional full path to phenv binary (default: $PHANTOM_HOME/bin/phenv, usually /opt/phantom/bin/phenv).",
+            "data_type": "string",
+            "required": false,
+            "order": 4
+        },
+        "asset_defaults": {
+            "description": "JSON map of scaffold asset keys to configured SOAR asset names, e.g. {\"servicenow\": \"snow_lab\", \"soar\": \"local\"}. Used at import to avoid Missing Configurations in the Visual Editor.",
+            "data_type": "string",
+            "required": false,
+            "order": 5
+        },
+        "custom_templates_json": {
+            "description": "JSON array of organization playbook templates (id must start with org-). Merged into the template library without rebuilding the app. See soar_playbook_builder/docs/CUSTOMIZATION.md (bundled) or sample_data/sample_org_templates.json.",
+            "data_type": "string",
+            "required": false,
+            "order": 6
+        },
+        "playbook_defaults_json": {
+            "description": "JSON defaults for readiness auto-fix: {\"constants\": {\"SLACK_CHANNEL\": \"#soc-alerts\"}, \"assets\": {\"slack\": \"slack_lab\"}}. Constants replace placeholders in generated Python; assets merge with asset_defaults.",
+            "data_type": "string",
+            "required": false,
+            "order": 7
+        },
+        "es_web_url": {
+            "description": "Splunk ES web URL (e.g. https://es.example.com:8000) — enables Back to Mission Control link in the sidecar when event_id is in the URL.",
+            "data_type": "string",
+            "required": false,
+            "order": 8
+        },
+        "sample_cases_json": {
+            "description": "Optional JSON array of demo/sample cases for the sidecar case picker (merged with built-in samples). See sample_data/sample_cases.json.",
+            "data_type": "string",
+            "required": false,
+            "order": 9
+        },
+        "operating_mode": {
+            "description": "Air-gap operating mode: air_gapped (no egress actions), restricted (warn on unknown egress), connected (default).",
+            "data_type": "string",
+            "required": false,
+            "default": "connected",
+            "order": 10
+        },
+        "default_ui_mode": {
+            "description": "Default sidecar persona when URL has no mode=: studio, assistant, coach, or tutor. URL mode= always overrides.",
+            "data_type": "string",
+            "required": false,
+            "default": "studio",
+            "order": 11
+        }
+    },
+    "actions": [
+        {
+            "action": "test connectivity",
+            "identifier": "test_connectivity",
+            "description": "Verify MCP agent bridge is reachable from SOAR",
+            "type": "test",
+            "read_only": true,
+            "parameters": {},
+            "output": [
+                {
+                    "data_path": "action_result.status",
+                    "data_type": "string"
+                },
+                {
+                    "data_path": "action_result.message",
+                    "data_type": "string"
+                },
+                {
+                    "data_path": "action_result.data.*.sidecar_url",
+                    "data_type": "string"
+                }
+            ],
+            "versions": "EQ(*)"
+        },
+        {
+            "action": "get sidecar url",
+            "identifier": "get_sidecar_url",
+            "description": "Return the REST handler URL for the playbook builder sidecar",
+            "type": "investigate",
+            "read_only": true,
+            "parameters": {
+                "playbook_id": {
+                    "description": "Optional playbook ID to pass to the sidecar",
+                    "data_type": "numeric",
+                    "required": false,
+                    "order": 0
+                },
+                "container_id": {
+                    "description": "SOAR case (container) ID — links the sidecar so Run on this case works",
+                    "data_type": "numeric",
+                    "required": false,
+                    "order": 1
+                },
+                "event_id": {
+                    "description": "Optional ES event ID for investigation context",
+                    "data_type": "string",
+                    "required": false,
+                    "order": 2
+                },
+                "rule_name": {
+                    "description": "Optional ES rule/notable name for template suggestions",
+                    "data_type": "string",
+                    "required": false,
+                    "order": 3
+                },
+                "investigation_id": {
+                    "description": "Optional Mission Control / investigation ID",
+                    "data_type": "string",
+                    "required": false,
+                    "order": 4
+                },
+                "mode": {
+                    "description": "Sidecar persona: studio, assistant, coach, tutor (optional — overrides default_ui_mode on asset)",
+                    "data_type": "string",
+                    "required": false,
+                    "order": 5
+                },
+                "tab": {
+                    "description": "Coach tab when mode=coach: respond, explain, or build",
+                    "data_type": "string",
+                    "required": false,
+                    "order": 6
+                }
+            },
+            "output": [
+                {
+                    "data_path": "action_result.data.*.sidecar_url",
+                    "data_type": "string"
+                },
+                {
+                    "data_path": "action_result.status",
+                    "data_type": "string"
+                }
+            ],
+            "versions": "EQ(*)"
+        },
+        {
+            "action": "rebuild capability index",
+            "identifier": "rebuild_capability_index",
+            "description": "Harvest installed apps, actions, assets, and vocabularies from local SOAR REST and persist the capability index",
+            "type": "generic",
+            "read_only": false,
+            "parameters": {},
+            "output": [
+                {
+                    "data_path": "action_result.data.*.index_version",
+                    "data_type": "string"
+                },
+                {
+                    "data_path": "action_result.data.*.app_count",
+                    "data_type": "numeric"
+                },
+                {
+                    "data_path": "action_result.data.*.action_count",
+                    "data_type": "numeric"
+                },
+                {
+                    "data_path": "action_result.data.*.harvest_status",
+                    "data_type": "string"
+                }
+            ],
+            "versions": "EQ(*)"
+        },
+        {
+            "action": "capability index status",
+            "identifier": "capability_index_status",
+            "description": "Return capability index version, age, app/action counts, and harvest health",
+            "type": "investigate",
+            "read_only": true,
+            "parameters": {},
+            "output": [
+                {
+                    "data_path": "action_result.data.*.index_version",
+                    "data_type": "string"
+                },
+                {
+                    "data_path": "action_result.data.*.stale",
+                    "data_type": "boolean"
+                },
+                {
+                    "data_path": "action_result.data.*.app_count",
+                    "data_type": "numeric"
+                }
+            ],
+            "versions": "EQ(*)"
+        },
+        {
+            "action": "export asset config",
+            "identifier": "export_asset_config",
+            "description": "Export Playbook Builder asset configuration as JSON for migration (secrets redacted by default)",
+            "type": "investigate",
+            "read_only": true,
+            "parameters": {
+                "include_secrets": {
+                    "description": "Include soar_rest_token in export (default false)",
+                    "data_type": "string",
+                    "required": false,
+                    "order": 0
+                }
+            },
+            "output": [
+                {
+                    "data_path": "action_result.data.*.copy_json",
+                    "data_type": "string"
+                },
+                {
+                    "data_path": "action_result.data.*.field_count",
+                    "data_type": "numeric"
+                }
+            ],
+            "versions": "EQ(*)"
+        },
+        {
+            "action": "import asset config",
+            "identifier": "import_asset_config",
+            "description": "Import previously exported asset configuration JSON onto this asset",
+            "type": "generic",
+            "read_only": false,
+            "parameters": {
+                "config_json": {
+                    "description": "Export bundle or configuration object JSON",
+                    "data_type": "string",
+                    "required": true,
+                    "order": 0
+                },
+                "confirm": {
+                    "description": "Set true to apply after preview",
+                    "data_type": "string",
+                    "required": false,
+                    "order": 1
+                }
+            },
+            "output": [
+                {
+                    "data_path": "action_result.data.*.import_keys",
+                    "data_type": "string"
+                }
+            ],
+            "versions": "EQ(*)"
+        },
+        {
+            "action": "run self test",
+            "identifier": "run_self_test",
+            "description": "Verify capability index, templates, demo data, and optional MCP bridge health",
+            "type": "test",
+            "read_only": true,
+            "parameters": {},
+            "output": [
+                {
+                    "data_path": "action_result.data.*.setup_complete",
+                    "data_type": "boolean"
+                },
+                {
+                    "data_path": "action_result.data.*.passed",
+                    "data_type": "numeric"
+                }
+            ],
+            "versions": "EQ(*)"
+        }
+    ]
+}

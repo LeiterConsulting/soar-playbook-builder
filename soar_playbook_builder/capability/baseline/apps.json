@@ -1,0 +1,164 @@
+{
+  "version": "1.0.0",
+  "apps": {
+    "phantom": {
+      "name": "phantom",
+      "product_name": "Splunk SOAR",
+      "version": "builtin",
+      "source": "baseline",
+      "actions": [
+        {
+          "name": "add note",
+          "description": "Add a note to the container",
+          "parameters": [
+            {"name": "content", "data_type": "string", "required": true},
+            {"name": "container", "data_type": "numeric", "required": true}
+          ],
+          "output_datapaths": ["action_result.message"],
+          "requires_egress": "false"
+        },
+        {
+          "name": "set severity",
+          "description": "Set container severity",
+          "parameters": [
+            {"name": "severity", "data_type": "string", "required": true, "contains": ["severity"]},
+            {"name": "container", "data_type": "numeric", "required": true}
+          ],
+          "output_datapaths": ["action_result.status"],
+          "requires_egress": "false"
+        },
+        {
+          "name": "add list",
+          "description": "Add an item to a custom list",
+          "parameters": [
+            {"name": "list_name", "data_type": "string", "required": true},
+            {"name": "value", "data_type": "string", "required": true}
+          ],
+          "output_datapaths": ["action_result.status"],
+          "requires_egress": "false"
+        },
+        {
+          "name": "run playbook",
+          "description": "Run another playbook",
+          "parameters": [
+            {"name": "playbook", "data_type": "string", "required": true},
+            {"name": "container", "data_type": "numeric", "required": true}
+          ],
+          "output_datapaths": ["action_result.status"],
+          "requires_egress": "false"
+        }
+      ]
+    },
+    "servicenow": {
+      "name": "servicenow",
+      "product_name": "ServiceNow",
+      "version": "baseline",
+      "source": "baseline",
+      "actions": [
+        {
+          "name": "create ticket",
+          "description": "Create a ServiceNow incident",
+          "parameters": [
+            {"name": "short_description", "data_type": "string", "required": true},
+            {"name": "description", "data_type": "string", "required": false},
+            {"name": "severity", "data_type": "string", "required": false, "contains": ["severity"]}
+          ],
+          "output_datapaths": ["action_result.data.*.number", "action_result.data.*.sys_id"],
+          "requires_egress": "true"
+        },
+        {
+          "name": "update ticket",
+          "description": "Update an existing ServiceNow incident",
+          "parameters": [
+            {"name": "id", "data_type": "string", "required": true},
+            {"name": "fields", "data_type": "string", "required": true}
+          ],
+          "output_datapaths": ["action_result.status"],
+          "requires_egress": "true"
+        }
+      ]
+    },
+    "slack": {
+      "name": "slack",
+      "product_name": "Slack",
+      "version": "baseline",
+      "source": "baseline",
+      "actions": [
+        {
+          "name": "send message",
+          "description": "Post a message to a Slack channel",
+          "parameters": [
+            {"name": "channel", "data_type": "string", "required": true},
+            {"name": "message", "data_type": "string", "required": true}
+          ],
+          "output_datapaths": ["action_result.status"],
+          "requires_egress": "true"
+        }
+      ]
+    },
+    "pagerduty": {
+      "name": "pagerduty",
+      "product_name": "PagerDuty",
+      "version": "baseline",
+      "source": "baseline",
+      "actions": [
+        {
+          "name": "create incident",
+          "description": "Create a PagerDuty incident",
+          "parameters": [
+            {"name": "title", "data_type": "string", "required": true},
+            {"name": "service_id", "data_type": "string", "required": true},
+            {"name": "body", "data_type": "string", "required": false}
+          ],
+          "output_datapaths": ["action_result.data.*.incident_id"],
+          "requires_egress": "true"
+        }
+      ]
+    },
+    "microsoft_teams": {
+      "name": "microsoft_teams",
+      "product_name": "Microsoft Teams",
+      "version": "baseline",
+      "source": "baseline",
+      "actions": [
+        {
+          "name": "post message",
+          "description": "Post a message to a Teams channel",
+          "parameters": [
+            {"name": "team_id", "data_type": "string", "required": true},
+            {"name": "channel_id", "data_type": "string", "required": true},
+            {"name": "message", "data_type": "string", "required": true}
+          ],
+          "output_datapaths": ["action_result.status"],
+          "requires_egress": "true"
+        }
+      ]
+    },
+    "virustotalv3": {
+      "name": "virustotalv3",
+      "product_name": "VirusTotal v3",
+      "version": "baseline",
+      "source": "baseline",
+      "actions": [
+        {
+          "name": "file reputation",
+          "description": "Look up file hash reputation",
+          "parameters": [
+            {"name": "hash", "data_type": "string", "required": true, "contains": ["hash"]}
+          ],
+          "output_datapaths": ["action_result.summary.malware", "action_result.data.*.attributes.last_analysis_stats"],
+          "requires_egress": "true"
+        },
+        {
+          "name": "domain reputation",
+          "description": "Look up domain reputation",
+          "parameters": [
+            {"name": "domain", "data_type": "string", "required": true, "contains": ["domain"]}
+          ],
+          "output_datapaths": ["action_result.summary.malware"],
+          "requires_egress": "true"
+        }
+      ]
+    }
+  }
+}

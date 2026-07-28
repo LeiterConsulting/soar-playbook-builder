@@ -1,0 +1,24 @@
+{
+  "name": "soar-playbook-builder-sidecar",
+  "private": true,
+  "version": "2.26.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build && cp templates/agent_chat.html ../soar_playbook_builder/widgets/agent_chat.html && rm -f ../soar_playbook_builder/widgets/index.html",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "highlight.js": "^11.11.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.18.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.5.0",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.5"
+  }
+}
