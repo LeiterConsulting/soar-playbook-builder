@@ -24,16 +24,30 @@ def test_export_redacts_secrets_by_default():
     out = export_asset_config_payload(cfg)
     assert out["status"] == "success"
     assert out["configuration"]["mcp_bridge_url"] == cfg["mcp_bridge_url"]
-    assert out["configuration"]["soar_rest_token"] == "***REDACTED***"
+    assert "soar_rest_token" not in out["configuration"]
     assert out["secrets_redacted"] is True
     blob = json.loads(out["copy_json"])
-    assert blob["configuration"]["soar_rest_token"] == "***REDACTED***"
+    assert "soar_rest_token" not in blob["configuration"]
 
 
-def test_export_include_secrets():
+def test_export_never_includes_secrets():
     cfg = {"soar_rest_token": "secret-token", "ai_instructions": "lab"}
-    out = export_asset_config_payload(cfg, include_secrets=True)
-    assert out["configuration"]["soar_rest_token"] == "secret-token"
+    out = export_asset_config_payload(cfg)
+    assert "secret-token" not in out["copy_json"]
+    assert "soar_rest_token" not in out["configuration"]
+
+
+def test_export_includes_strict_org_ir_and_legacy_safety_flag():
+    cfg = {
+        "custom_ir_templates_json": '{"templates":[]}',
+        "custom_templates_json": '{"templates":[]}',
+        "allow_legacy_python_templates": False,
+    }
+    out = export_asset_config_payload(cfg)
+    exported = out["configuration"]
+    assert exported["custom_ir_templates_json"] == '{"templates":[]}'
+    assert exported["custom_templates_json"] == '{"templates":[]}'
+    assert exported["allow_legacy_python_templates"] == "False"
 
 
 def test_import_preview_requires_confirm():
@@ -52,12 +66,20 @@ def test_import_rejects_redacted_secret():
     assert "ai_instructions" in (out.get("proposed_configuration") or {})
 
 
+def test_import_rejects_plaintext_secret():
+    cfg = {}
+    bundle = {"configuration": {"soar_rest_token": "secret-token", "ai_instructions": "x"}}
+    out = import_asset_config_payload(None, cfg, config_json=json.dumps(bundle), confirm=False)
+    assert "soar_rest_token" not in (out.get("proposed_configuration") or {})
+
+
 if __name__ == "__main__":
     for fn in (
         test_export_redacts_secrets_by_default,
-        test_export_include_secrets,
+        test_export_never_includes_secrets,
         test_import_preview_requires_confirm,
         test_import_rejects_redacted_secret,
+        test_import_rejects_plaintext_secret,
     ):
         fn()
         print(f"OK {fn.__name__}")

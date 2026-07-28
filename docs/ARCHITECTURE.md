@@ -33,6 +33,11 @@ Nothing in the SOAR app ships sample data, lab containers, or environment-specif
 │  • draft_import.py — package + import_playbook                          │
 │  • local_nl_build.py — offline NL pattern matching                      │
 │  • capability/ — local SOAR introspection index (air-gap step 1)       │
+│  • ir/ — strict non-executable graph + JSON Schema/GBNF (step 2)       │
+│  • compiler/ — deterministic Python + visual JSON siblings (step 3)    │
+│  • validate/ — capability-grounded GapReport + remediation (step 4)    │
+│  • llm/ — constrained provider + IR-only bounded decode (step 6)       │
+│  • retrieve/ — offline BM25 + canonical IR exemplars (step 7)          │
 │  • Sidecar UI (React → static JS/CSS in widgets/)                       │
 │  • Optional: proxy chat → MCP bridge URL (asset setting)                │
 └────────────────────────────┬────────────────────────────────────────────┘
@@ -87,16 +92,20 @@ Nothing in the SOAR app ships sample data, lab containers, or environment-specif
 
 ---
 
-### Mode B — Bridge + LLM (natural language + AI)
+### Mode B — Bridge + LLM (experimental)
 
-**SOAR app unchanged; chat and advanced NL are proxied to an MCP agent bridge.**
+The current sidecar proxies advanced NL to an MCP agent bridge. That legacy
+bridge may return Python source and therefore is not part of the trusted
+compiler path. Mode B remains experimental and must be disabled by default
+until the REST/UI flow accepts only the constrained decoder's IR result.
 
 | Capability | Available |
 |------------|-----------|
 | Everything in Mode A | Yes |
 | Open-ended natural language requests | Yes |
-| LLM-generated scaffolds and refinements (when API key set on bridge) | Yes |
-| Shared draft cache across chat turns | Yes |
+| Legacy LLM-generated scaffolds/refinements | Experimental; not trusted for import |
+| Strict provider → IR → preflight boundary | Implemented offline; UI wiring and real-model qualification pending |
+| Shared bridge draft cache across chat turns | Legacy only; not a trusted draft authority |
 | Optional: Splunk/SOAR tools on bridge for IDE users | Yes (MCP host) |
 
 **Network:** SOAR server must reach `mcp_bridge_url` (HTTPS or HTTP per policy). The bridge host calls the LLM:
@@ -110,7 +119,8 @@ See **[ON_PREM_LLM.md](./ON_PREM_LLM.md)** for localized LLM configuration (`OPE
 
 - SOAR asset stores **only the bridge URL**, not LLM keys.
 - LLM and Splunk/SOAR service credentials live on the **bridge host** under customer control.
-- Review data-handling policy: playbook source and chat text are sent to the **LLM endpoint configured on the bridge** when Mode B NL generation runs. With an on-prem LLM, that traffic stays inside the customer network.
+- Review data-handling policy: chat and capability context are sent to the
+  configured model endpoint. Model-authored Python must not cross into import.
 
 **Production pattern:** Dedicated bridge VM on a network segment SOAR can reach (firewall allow-list). Avoid exposing port 8003 to the public internet without authentication and TLS termination.
 
@@ -121,10 +131,10 @@ See **[ON_PREM_LLM.md](./ON_PREM_LLM.md)** for localized LLM configuration (`OPE
 | Task | Mode A (localized) | Mode B (bridge + LLM) |
 |------|--------------------|------------------------|
 | Install and use with zero external services | Yes | No (needs bridge) |
-| Air-gapped SOAR | Yes | No |
+| Air-gapped SOAR | Yes | Yes only with an internal, qualified model endpoint |
 | Pick a named pattern and import | Yes | Yes |
-| “Build a playbook that …” free-form prose | Limited (keyword patterns) | Full NL + LLM |
-| Iterative chat refine (“add a decision on severity”) | Limited | Yes |
+| “Build a playbook that …” free-form prose | Limited (keyword patterns) | Experimental until IR-only wiring/qualification |
+| Iterative chat refine (“add a decision on severity”) | Limited | Experimental until IR-only wiring/qualification |
 | Customize patterns in `builder_helpers.py` only | Yes | Yes |
 | Use Cursor MCP for same build tools | No | Yes (optional) |
 | Control where LLM traffic exits | N/A (no LLM) | Yes (bridge host egress) |
@@ -154,7 +164,7 @@ Base: `https://<soar>/rest/handler/<directory>/<asset>/`
 |-------|---------|
 | `chat` | Sidecar page + JSON API (scaffold, validate, chat, import) |
 | `widget` | Compact VPE poll widget |
-| `poll_playbook` | Playbook change fingerprint for live sync |
+| `poll_playbook` | POST-only playbook change fingerprint for live sync |
 | `proxy_chat` | Direct MCP proxy (advanced) |
 
 The `directory` value comes from SOAR’s app registry (`/rest/app`), derived from the display name **SOAR Playbook Builder**, not from `package_name`.
@@ -166,9 +176,17 @@ The `directory` value comes from SOAR’s app registry (`/rest/app`), derived fr
 ### Scaffold (both modes)
 
 1. User selects pattern or sends NL text  
-2. Connector runs `scaffold_pattern()` locally **or** proxies to MCP  
+2. Current legacy path runs `scaffold_pattern()` locally **or** proxies to MCP
 3. `attach_visual_preview()` adds blocks, Mermaid, storyboard  
-4. Browser renders preview; source held in session until Import  
+4. Browser renders preview
+
+The hardened target path is IR → preflight `GapReport` → deterministic compiler
+→ reviewed artifacts. The strict IR, offline compiler, and deterministic
+validator now exist. A separate review-only REST/UI path can show canonical IR,
+gaps, and artifact hashes, but always returns `import_enabled=false`. It is not
+connected to import until template migration, approval binding, authorization,
+and live-SOAR qualification gates pass. The legacy
+Python-to-visual heuristic remains compatibility code, not the trusted compiler.
 
 ### Import (both modes)
 
@@ -181,7 +199,12 @@ The `directory` value comes from SOAR’s app registry (`/rest/app`), derived fr
 
 1. Sidecar POST/GET chat with message  
 2. Connector forwards to `{mcp_bridge_url}/api/chat`  
-3. Bridge returns enriched payload; connector adds SOAR deep links  
+3. The current bridge returns a legacy payload; Python `source` from this path
+   is untrusted and must not be imported.
+
+The target flow is model endpoint → strict JSON decode → authoritative
+provenance → typed IR → deterministic preflight → analyst review → compiler.
+See [MODEL_BOUNDARY.md](./MODEL_BOUNDARY.md).
 
 ---
 

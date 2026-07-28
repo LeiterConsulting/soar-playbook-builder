@@ -57,9 +57,15 @@ This document explains **exactly** how the SOAR Playbook Builder connects to an 
 
 | Field | Example | Purpose |
 |-------|---------|---------|
-| `mcp_bridge_url` | `http://10.0.50.12:8003/agent` | Base URL for agent API (include `/agent` suffix) |
+| `mcp_bridge_url` | `https://bridge.internal:8003/agent` | Optional base URL for agent API (include `/agent` suffix) |
+| `mcp_bridge_allow_insecure_http` | `false` | Lab-only override for a plain HTTP bridge |
 
-Default if unset: `http://localhost:8003/agent` (only valid when bridge listens on SOAR localhost).
+Default if unset: empty. This is templates-only Mode A and makes no bridge request.
+For Mode B, prefer HTTPS with a certificate trusted by the SOAR host. Plain HTTP
+is rejected unless `mcp_bridge_allow_insecure_http` is explicitly enabled, and is
+suitable only on an isolated, authenticated network segment while bringing up a
+lab. Bridge redirects, cloud-metadata/link-local targets, and oversized payloads
+are rejected.
 
 ### Bridge host
 
@@ -142,7 +148,7 @@ Most deployments use `/chat` only; `proxy_chat` exists for integrations and debu
 
 1. Analyst types in sidecar **Chat** and submits.
 2. Browser `fetch`es **same-origin**  
-   `GET/POST …/rest/handler/<directory>/<asset>/chat?message=…` (credentials: SOAR session).
+   `POST …/rest/handler/<directory>/<asset>/chat` with a JSON body (credentials: SOAR session).
 3. Connector `_handle_chat_api`:
    - If message matches a **local pattern command** → `scaffold_pattern()` on SOAR (no MCP).
    - Else builds `body = { message, context }` and calls `_proxy_chat_to_bridge(body, mcp_bridge_url)`.
@@ -214,7 +220,7 @@ Use this from SOAR (not curl from your laptop) to validate production networking
 1. Install and start MCP agent bridge on bridge host.
 2. From **SOAR server** shell:  
    `curl -sS http://<bridge>:8003/agent/health`
-3. Set asset `mcp_bridge_url` to `http://<bridge>:8003/agent` (or HTTPS URL).
+3. Set asset `mcp_bridge_url` to `https://<bridge>:8003/agent`. For an isolated lab only, explicitly enable the insecure-HTTP override.
 4. Run **Test connectivity** on the asset.
 5. Open sidecar — confirm **AI connected**.
 6. Send NL chat message; confirm preview updates.

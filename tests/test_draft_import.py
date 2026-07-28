@@ -6,6 +6,7 @@ import json
 import sys
 import tarfile
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1] / "soar_playbook_builder"
 sys.path.insert(0, str(ROOT))
@@ -18,6 +19,7 @@ from draft_import import (
     build_playbook_metadata,
     is_legacy_python27,
     is_python_39,
+    import_nl_draft,
     package_source_flat_py_b64,
     package_source_with_metadata_b64,
     slug_from_label,
@@ -81,3 +83,32 @@ def test_package_flat_py_only():
     raw = base64.b64decode(b64)
     with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
         assert tar.getnames() == ["hello_world.py"]
+
+
+def test_import_never_deletes_or_overwrites_legacy_python_playbook():
+    source = (
+        "import phantom.app as phantom\n\n"
+        "def on_start(container):\n"
+        "    phantom.debug('hello')\n"
+    )
+    with patch(
+        "draft_import.find_playbook_by_slug",
+        return_value={
+            "id": 41,
+            "name": "hello_world",
+            "python_version": "2.7",
+        },
+    ):
+        with patch("draft_import.import_playbook_b64") as upload:
+            result = import_nl_draft(
+                source,
+                name="Hello World",
+                request=None,
+                skip_asset_check=True,
+            )
+    assert result["status"] == "error"
+    assert (
+        result["error_code"]
+        == "LEGACY_PYTHON_PLAYBOOK_UNSUPPORTED"
+    )
+    upload.assert_not_called()

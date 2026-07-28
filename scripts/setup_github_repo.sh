@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# One-time: init THIS repo and point origin at wts408/soar-playbook-builder (NOT deslicer).
+# One-time: init THIS repo and point origin at LeiterConsulting/soar-playbook-builder.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
-GITHUB_USER="${GITHUB_USER:-wts408}"
+GITHUB_USER="${GITHUB_USER:-LeiterConsulting}"
 REPO_NAME="${REPO_NAME:-soar-playbook-builder}"
 
 cd "${REPO_DIR}"
@@ -29,7 +29,7 @@ fi
 echo ""
 echo "Next steps:"
 echo "  1. Create empty repo: https://github.com/new → ${GITHUB_USER}/${REPO_NAME}"
-echo "  2. git add -A && git commit -m 'Initial release: SOAR Playbook Builder 2.26.0'"
+echo "  2. git add -A && git commit -m 'Release: SOAR Playbook Builder <manifest version>'"
 echo "  3. git branch -M main"
 echo "  4. git push -u origin main"
 echo ""

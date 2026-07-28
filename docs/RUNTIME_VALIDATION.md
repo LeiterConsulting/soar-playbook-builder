@@ -5,7 +5,7 @@ Automated vetting for every Playbook Builder template: **structural** (offline, 
 ## Quick start
 
 ```bash
-cd packaging/soar-playbook-builder-app
+cd soar-playbook-builder
 
 # Offline — all 11 templates (Python, COA, callbacks, assets, NL routing)
 python3 scripts/runtime_validate.py

@@ -32,7 +32,7 @@ const RECOVERY_TIERS = [
     time: "Document",
     steps: [
       "Capture prompt, mode, Readiness output, and case ID.",
-      "Short-term: org custom template via custom_templates_json.",
+      "Short-term: strict org IR template via custom_ir_templates_json.",
       "Long-term: add scaffold + keywords in a future release.",
     ],
   },

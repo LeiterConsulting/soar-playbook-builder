@@ -63,7 +63,7 @@ Full capability matrix: [ARCHITECTURE.md](./ARCHITECTURE.md).
 ## Build the SOAR package
 
 ```bash
-cd packaging/soar-playbook-builder-app
+cd soar-playbook-builder
 ./package_app.sh
 # Output: dist/soar_playbook_builder.tgz
 ```
@@ -100,7 +100,7 @@ Verify manifest before customer handoff:
 Run the automated suite and complete manual sign-off:
 
 ```bash
-cd packaging/soar-playbook-builder-app
+cd soar-playbook-builder
 ./scripts/run-e2e-validate.sh auto
 ```
 

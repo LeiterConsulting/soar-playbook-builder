@@ -520,30 +520,6 @@ def _get_playbook_by_id(request: Any | None, playbook_id: int) -> dict[str, Any]
     return _playbook_record_from_rest(resp)
 
 
-def _delete_playbook(
-    playbook_id: int,
-    request: Any | None,
-    *,
-    attempts_log: list[str] | None = None,
-) -> bool:
-    """Best-effort delete. SOAR REST does not support DELETE on /rest/playbook (returns 405)."""
-    ok, resp, log = _phantom_rest("DELETE", f"playbook/{playbook_id}", request=request)
-    if attempts_log is not None:
-        attempts_log.extend(log)
-        attempts_log.append(
-            f"DELETE playbook/{playbook_id} -> {ok} {_summarize_rest_payload(resp)}"
-        )
-    if ok:
-        return True
-    detail = _summarize_rest_payload(resp)
-    if "405" in detail or "not allowed" in detail.lower():
-        if attempts_log is not None:
-            attempts_log.append(
-                "SOAR REST cannot DELETE playbooks — remove in Playbooks UI, then re-import"
-            )
-    return False
-
-
 def _pin_playbook_python_version(
     playbook_id: int,
     request: Any | None,
@@ -793,26 +769,29 @@ def import_nl_draft(
     existing = find_playbook_by_slug(slug, request)
     if existing and is_legacy_python27(existing):
         old_id = int(existing["id"])
-        delete_step: dict[str, Any] = {
-            "id": "delete_legacy",
-            "label": "Removing legacy Python 2.7 copy",
-            "status": "running",
-            "detail": f"id {old_id}",
+        upload_step["status"] = "skipped"
+        upload_step["detail"] = "Blocked before upload"
+        steps.insert(
+            1,
+            {
+                "id": "legacy_runtime",
+                "label": "Unsupported legacy Python playbook",
+                "status": "error",
+                "detail": f"id {old_id}",
+            },
+        )
+        return {
+            "status": "error",
+            "error_code": "LEGACY_PYTHON_PLAYBOOK_UNSUPPORTED",
+            "error": (
+                f"Existing playbook `{slug}` uses unsupported Python 2.7. "
+                "Playbook Builder will not delete or overwrite it. Use "
+                "Splunk's supported platform migration workflow, verify "
+                "Python 3.13, then retry."
+            ),
+            "import_attempts": attempts,
+            "import_steps": steps,
         }
-        steps.insert(1, delete_step)
-        deleted = _delete_playbook(old_id, request, attempts_log=attempts)
-        if deleted:
-            delete_step["status"] = "done"
-            time.sleep(1.0)
-        else:
-            delete_step["status"] = "warning"
-            delete_step["detail"] = (
-                f"REST DELETE unsupported (id {old_id}) — delete `{slug}` in Playbooks UI, "
-                f"then Import again. Attempting force import anyway."
-            )
-            attempts.append(
-                f"legacy 2.7 playbook id {old_id} remains; SOAR REST DELETE returns 405"
-            )
 
     ok_meta, resp_meta, attempts_meta = import_playbook_b64(meta_b64, request=request)
     attempts.extend(attempts_meta)
@@ -889,12 +868,29 @@ def import_nl_draft(
         py_step["status"] = "done"
         py_step["detail"] = py_ver or DEFAULT_PLAYBOOK_PYTHON_VERSION
     elif final_record and is_legacy_python27(final_record):
-        py_step["status"] = "warning"
+        py_step["status"] = "error"
         py_step["detail"] = (
-            "Still 2.7 after modern import — use Playbooks UI: "
-            "Settings → Update Python Version → 3.13"
+            "SOAR reported unsupported Python 2.7 after import"
         )
-        attempts.append("modern import landed on 2.7; phenv skipped (not on SOAR 6.x)")
+        attempts.append(
+            "modern import landed on unsupported Python 2.7; execution blocked"
+        )
+        return {
+            "status": "error",
+            "error_code": "IMPORTED_UNSUPPORTED_PYTHON_RUNTIME",
+            "error": (
+                "SOAR created the playbook but reported Python 2.7, which is "
+                "outside the SOAR 8.5 / Python 3.13 support boundary. Do not "
+                "run it. Remove or migrate it with Splunk's supported "
+                "platform workflow."
+            ),
+            "playbook_id": final_id,
+            "playbook_name": (final_record or {}).get("name"),
+            "imported_side_effect": True,
+            "ready_to_run": False,
+            "import_attempts": attempts,
+            "import_steps": steps,
+        }
     else:
         py_step["status"] = "done"
         py_step["detail"] = DEFAULT_PLAYBOOK_PYTHON_VERSION

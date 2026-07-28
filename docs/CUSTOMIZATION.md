@@ -11,8 +11,13 @@ How to adapt the Playbook Builder for your organization without turning it into 
 | Setting | Purpose |
 |---------|---------|
 | **mcp_bridge_url** | Base URL for Mode B bridge, e.g. `https://bridge.internal:8003/agent`. Empty = Mode A. |
+| **mcp_bridge_allow_insecure_http** | Lab-only plain HTTP bridge override. Default `false`. |
+| **soar_loopback_ca_bundle** | Optional PEM CA path for verified SOAR REST loopback. |
+| **soar_loopback_allow_insecure_tls** | Lab-only loopback TLS bypass. Default `false`. |
 | **ai_instructions** | Short text in the sidecar header (SOC policy, naming standard, change process). |
-| **custom_templates_json** | JSON array of org templates (`org-*` ids). See [Organization templates](#organization-templates-no-app-rebuild) below. |
+| **custom_ir_templates_json** | Strict Playbook IR organization templates (`org-*` ids). Review-only until live qualification. |
+| **custom_templates_json** | Legacy executable Python templates. Ignored by default. |
+| **allow_legacy_python_templates** | Lab-only compatibility switch for legacy Python. Default `false`; enabling it does not make source trusted. |
 | **asset_defaults** | Map scaffold asset keys to configured SOAR asset names at import. |
 | **playbook_defaults_json** | Constants and asset aliases for readiness auto-fix (see Readiness check below). |
 
@@ -43,23 +48,52 @@ Rebuild with `./package_app.sh` after manifest changes.
 
 ## Organization templates (no app rebuild)
 
-Admins can add org-specific playbooks via the Playbook Builder asset field **`custom_templates_json`**. Templates appear in the sidecar library under **Organization** with an **[Org]** badge.
+Admins can add org-specific, declarative templates via the Playbook Builder
+asset field **`custom_ir_templates_json`**. Valid templates appear in the
+sidecar library under **Organization** with **[Org]** and **Strict IR** badges.
+They enter the same strict parser, deterministic preflight, and preview compiler
+as shipped IR templates. Import remains locked until the live SOAR qualification
+gates in [TRUSTED_REVIEW.md](./TRUSTED_REVIEW.md) are complete.
 
 ### JSON schema
 
 ```json
 {
+  "schema_version": "1.0",
   "templates": [
     {
-      "id": "org-crowdstrike-isolate",
-      "label": "CrowdStrike Host Isolate",
+      "id": "org-review-note",
+      "label": "Organization Review Note",
       "category": "Organization",
-      "description": "Isolate endpoint via CrowdStrike when severity is high.",
-      "tier": "destructive",
-      "integrations": ["crowdstrike"],
-      "nl_keywords": ["crowdstrike", "isolate host", "contain endpoint"],
-      "destructive_actions": ["isolate host"],
-      "source": "import phantom.app as phantom\n\ndef on_start(container):\n    phantom.add_note(container=container, content='Isolate host', title='Org')\n    on_finish(container)\n\ndef on_finish(container):\n    phantom.debug('done')\n"
+      "description": "Format a deterministic analyst review note.",
+      "tier": "safe",
+      "integrations": [],
+      "nl_keywords": ["organization review note"],
+      "ir": {
+        "schema_version": "1.0.0",
+        "id": "org-review-note",
+        "name": "Organization Review Note",
+        "description": "Format a deterministic analyst review note.",
+        "entrypoint": "start",
+        "nodes": [
+          {"id": "start", "type": "start", "next": "format_note"},
+          {
+            "id": "format_note",
+            "type": "format",
+            "template": "Review required",
+            "inputs": {},
+            "output": "note",
+            "next": "complete"
+          },
+          {"id": "complete", "type": "end", "outcome": "success"}
+        ],
+        "metadata": {
+          "capability_index_version": "organization-template-unbound",
+          "operating_mode": "air_gapped",
+          "template_id": "org-review-note",
+          "labels": ["organization", "review"]
+        }
+      }
     }
   ]
 }
@@ -68,23 +102,37 @@ Admins can add org-specific playbooks via the Playbook Builder asset field **`cu
 | Field | Required | Notes |
 |-------|----------|-------|
 | `id` | yes | Must start with `org-` (e.g. `org-demo-note`). Cannot override shipped template ids. |
-| `source` | yes | Full Python playbook with `on_start(container)`. Validated with `ast.parse` and analyze score. |
+| `ir` | yes | Closed Playbook IR 1.0 object. Both `ir.id` and `metadata.template_id` must exactly match the wrapper `id`. |
 | `label` | no | Display name in dropdown |
 | `category` | no | Default `Organization` |
 | `tier` | no | `safe`, `integration`, or `destructive` (default `integration`) |
 | `nl_keywords` | no | Offline NL routing when MCP bridge is unavailable |
-| `destructive_actions` | no | Shown in HITL confirm for destructive tier |
+| `destructive_actions` | no | Review metadata for destructive tier; this does not authorize execution |
 | `integrations` | no | Shown in template description |
 
-Invalid entries are skipped; errors return in `list_patterns` → `org_errors` and appear in the sidecar chat on load.
+The loader accepts at most 128 entries and 1 MiB per configuration field.
+Duplicate JSON keys, non-finite values, invalid IR graphs, unknown IR fields,
+oversized metadata, and ID drift fail closed. Invalid entries are skipped;
+`list_patterns` returns `org_errors` and `org_warnings`, which also appear in
+the sidecar chat.
 
-**Copy-paste starter:** `sample_data/sample_org_templates.json` in the install package (also under `soar_playbook_builder/sample_data/` on SOAR).
+**Copy-paste starter:** `sample_data/sample_org_ir_templates.json` in the
+install package (also under `soar_playbook_builder/sample_data/` on SOAR).
+
+### Legacy Python compatibility
+
+`custom_templates_json` contains executable Python and bypasses the declarative
+IR/compiler trust boundary. It is ignored unless
+`allow_legacy_python_templates=true`. Even when explicitly enabled, the UI marks
+these templates **Legacy Python · untrusted**, and they cannot use trusted IR
+review. Keep this compatibility switch disabled outside an isolated lab.
 
 ### When to use org JSON vs code changes
 
 | Approach | Best for |
 |----------|----------|
-| **`custom_templates_json`** | Customer-specific starters, imported VPE exports, air-gapped sites that cannot rebuild the `.tgz` |
+| **`custom_ir_templates_json`** | Customer-specific declarative starters that need strict offline review without rebuilding the `.tgz` |
+| **Legacy `custom_templates_json`** | Isolated compatibility labs only; executable source is untrusted |
 | **Code change** (`builder_helpers.py` + catalog) | Templates you ship to all customers in the community package |
 
 Analysts should not save chat one-offs as templates without admin review — use NL chat for ad hoc builds.
@@ -134,7 +182,7 @@ If you run the optional MCP agent bridge, align bridge scaffolds with SOAR-side 
 After UI changes:
 
 ```bash
-cd packaging/soar-playbook-builder-app
+cd soar-playbook-builder
 ./package_app.sh
 # Reinstall dist/soar_playbook_builder.tgz on SOAR
 ```

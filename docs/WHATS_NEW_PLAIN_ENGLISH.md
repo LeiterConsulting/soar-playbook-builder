@@ -8,7 +8,12 @@ This page explains recent Playbook Builder updates without jargon. For technical
 
 **What changed:** Help now has a **Growing & Customizing Templates** chapter. The Templates panel on Build shows a count like `11 built-in · 2 org` and a footnote explaining how to add more. `CUSTOMIZATION.md` ships inside the app on SOAR.
 
-**Why it matters:** Eleven built-in patterns are a starter set, not the whole product. Admins can paste org-specific playbooks into `custom_templates_json` on the asset — no `.tgz` rebuild. Analysts see `[Org]` templates in the dropdown when configured.
+**Why it matters:** Eleven built-in patterns are a starter set, not the whole
+product. Admins can paste strict, declarative organization IR into
+`custom_ir_templates_json` without rebuilding the `.tgz`. Analysts see
+`[Org]` and `Strict IR` badges and can run deterministic review; import remains
+locked pending live qualification. Legacy Python templates are disabled by
+default.
 
 **Example:** Your team exports a VPE playbook, wraps it in org JSON with `nl_keywords`, pastes into the asset, refreshes the sidecar — the new pattern appears under Organization with offline NL routing.
 

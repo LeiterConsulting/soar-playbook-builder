@@ -4,7 +4,7 @@ Thanks for improving SOAR Playbook Builder.
 
 ## Quick path
 
-1. Fork [wts408/soar-playbook-builder](https://github.com/wts408/soar-playbook-builder) and create a branch from `main`.
+1. Fork [LeiterConsulting/soar-playbook-builder](https://github.com/LeiterConsulting/soar-playbook-builder) and create a branch from `main`.
 2. Make focused changes; run tests before opening a PR:
    ```bash
    python3 -m pytest tests/ -q

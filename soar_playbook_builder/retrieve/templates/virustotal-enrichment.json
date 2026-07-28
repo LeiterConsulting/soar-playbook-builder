@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0.0",
+  "id": "virustotal-enrichment",
+  "name": "VirusTotal File Hash",
+  "description": "Query VirusTotal v3 for file hash malware reputation.",
+  "entrypoint": "start",
+  "nodes": [
+    {"id": "start", "type": "start", "next": "file_reputation"},
+    {"id": "file_reputation", "type": "action", "app": "virustotalv3", "action": "file reputation", "asset": {"kind": "asset_unbound"}, "parameters": {"hash": {"kind": "datapath", "scope": "artifact", "path": ["cef", "fileHash"]}}, "on_success": "complete", "on_failure": "failed"},
+    {"id": "complete", "type": "end", "outcome": "success"},
+    {"id": "failed", "type": "end", "outcome": "failure"}
+  ],
+  "metadata": {"capability_index_version": "template-library-v1", "operating_mode": "connected", "template_id": "virustotal-enrichment", "labels": ["virustotal", "file", "hash", "malware"]}
+}

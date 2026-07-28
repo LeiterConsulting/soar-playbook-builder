@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0.0",
+  "id": "es-notable-response",
+  "name": "ES Notable Response",
+  "description": "Format a review summary from Splunk ES notable container fields without an external integration.",
+  "entrypoint": "start",
+  "nodes": [
+    {"id": "start", "type": "start", "next": "format_summary"},
+    {"id": "format_summary", "type": "format", "template": "Review notable with severity {severity}", "inputs": {"severity": {"kind": "datapath", "scope": "container", "path": ["severity"]}}, "output": "summary", "next": "complete"},
+    {"id": "complete", "type": "end", "outcome": "success"}
+  ],
+  "metadata": {"capability_index_version": "template-library-v1", "operating_mode": "air_gapped", "template_id": "es-notable-response", "labels": ["splunk", "notable", "offline"]}
+}

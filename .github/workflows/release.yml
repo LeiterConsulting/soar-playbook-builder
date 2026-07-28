@@ -1,5 +1,5 @@
-# Release SOAR app package — wts408/soar-playbook-builder
-# Tag: v2.26.0 → GitHub Release with soar_playbook_builder.tgz
+# Release SOAR app package — LeiterConsulting/soar-playbook-builder
+# Tag: v<manifest app_version> → GitHub Release with app, SBOM, and checksums
 
 name: Release SOAR app package
 
@@ -17,12 +17,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: sidecar-ui/package-lock.json
 
@@ -32,18 +32,36 @@ jobs:
           ./package_app.sh
           ls -la dist/
 
+      - name: Verify tag, archive, and checksum
+        shell: bash
+        run: |
+          python scripts/inspect_app_archive.py dist/soar_playbook_builder.tgz
+          (cd sidecar-ui && npm sbom --sbom-format cyclonedx > ../dist/soar_playbook_builder-ui.sbom.cdx.json)
+          manifest_version="$(python -c 'import json; print(json.load(open("soar_playbook_builder/soar_playbook_builder.json"))["app_version"])')"
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "$GITHUB_REF_NAME" != "v$manifest_version" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match manifest v$manifest_version" >&2
+            exit 1
+          fi
+          (cd dist && sha256sum soar_playbook_builder.tgz soar_playbook_builder-ui.sbom.cdx.json > SHA256SUMS)
+
       - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: soar_playbook_builder
-          path: dist/soar_playbook_builder.tgz
+          path: |
+            dist/soar_playbook_builder.tgz
+            dist/soar_playbook_builder-ui.sbom.cdx.json
+            dist/SHA256SUMS
           if-no-files-found: error
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          files: dist/soar_playbook_builder.tgz
+          files: |
+            dist/soar_playbook_builder.tgz
+            dist/soar_playbook_builder-ui.sbom.cdx.json
+            dist/SHA256SUMS
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

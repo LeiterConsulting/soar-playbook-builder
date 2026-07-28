@@ -11,10 +11,17 @@ from pattern_catalog import list_patterns_payload
 from runtime_fixtures import RUNTIME_FIXTURES
 
 
-def _probe_bridge(mcp_bridge_url: str) -> dict[str, Any]:
+def _probe_bridge(
+    mcp_bridge_url: str,
+    *,
+    allow_insecure_http: bool = False,
+) -> dict[str, Any]:
     from playbook_builder_connector import _probe_mcp_bridge
 
-    return _probe_mcp_bridge(mcp_bridge_url)
+    return _probe_mcp_bridge(
+        mcp_bridge_url,
+        allow_insecure_http=allow_insecure_http,
+    )
 
 
 def environment_check_payload(
@@ -28,7 +35,17 @@ def environment_check_payload(
     fixes: list[dict[str, Any]] = []
 
     bridge_url = (cfg.get("mcp_bridge_url") or "").strip()
-    probe = _probe_bridge(bridge_url) if bridge_url else {"reachable": False, "hint": "No URL configured"}
+    allow_insecure_http = str(
+        cfg.get("mcp_bridge_allow_insecure_http") or ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    probe = (
+        _probe_bridge(
+            bridge_url,
+            allow_insecure_http=allow_insecure_http,
+        )
+        if bridge_url
+        else {"reachable": False, "hint": "No URL configured"}
+    )
     bridge_ok = bool(probe.get("reachable"))
     llm_ok = bool(probe.get("llm_configured")) if bridge_ok else False
 

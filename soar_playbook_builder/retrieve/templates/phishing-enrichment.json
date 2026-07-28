@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0.0",
+  "id": "phishing-enrichment",
+  "name": "Phishing URL Enrichment",
+  "description": "Normalize a phishing request URL as a safe offline enrichment starting point.",
+  "entrypoint": "start",
+  "nodes": [
+    {"id": "start", "type": "start", "next": "normalize_url"},
+    {"id": "normalize_url", "type": "code", "helper": "normalize_indicator", "arguments": {"value": {"kind": "datapath", "scope": "artifact", "path": ["cef", "requestURL"]}}, "output": "normalized_url", "on_success": "complete", "on_failure": "failed"},
+    {"id": "complete", "type": "end", "outcome": "success"},
+    {"id": "failed", "type": "end", "outcome": "failure"}
+  ],
+  "metadata": {"capability_index_version": "template-library-v1", "operating_mode": "air_gapped", "template_id": "phishing-enrichment", "labels": ["phishing", "url", "enrichment"]}
+}

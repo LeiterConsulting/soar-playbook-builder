@@ -4,9 +4,9 @@
     "description": "Guided playbook authoring for Splunk SOAR: template and ES-oriented scaffolds, block-flow preview, Python validation, Visual Playbook Editor import and sync, and optional natural-language drafting via an external MCP agent bridge.",
     "type": "information service",
     "publisher": "Community",
-    "license": "Apache 2.0",
-    "app_version": "2.26.0",
-    "utctime_updated": "2026-07-28T13:00:00.000000Z",
+    "license": "MIT",
+    "app_version": "2.27.0",
+    "utctime_updated": "2026-07-28T21:30:00.000000Z",
     "package_name": "soar_playbook_builder",
     "main_module": "playbook_builder_connector.py",
     "min_phantom_version": "8.5.0",
@@ -19,81 +19,101 @@
     "rest_handler": "playbook_builder_connector.handle_request",
     "configuration": {
         "mcp_bridge_url": {
-            "description": "MCP agent bridge base URL (e.g. http://10.0.0.5:8003/agent)",
+            "description": "Optional MCP agent bridge base URL for AI Mode B (e.g. https://bridge.internal:8003/agent). Leave empty for templates-only Mode A.",
             "data_type": "string",
             "required": false,
-            "default": "http://localhost:8003/agent",
+            "default": "",
             "order": 0
+        },
+        "mcp_bridge_allow_insecure_http": {
+            "description": "Lab-only override that permits a plain HTTP MCP bridge. Keep disabled for production.",
+            "data_type": "boolean",
+            "required": false,
+            "default": false,
+            "order": 1
         },
         "ai_instructions": {
             "description": "SOC context shown in the playbook builder sidecar header",
             "data_type": "string",
             "required": false,
             "default": "Describe playbooks in plain language — preview, validate, and import into SOAR",
-            "order": 1
+            "order": 2
         },
         "soar_rest_token": {
             "description": "Optional SOAR REST API token (ph-auth-token) for sidecar import when browser session loopback fails. Create under Administration → Users → Authentication for REST API.",
-            "data_type": "string",
+            "data_type": "password",
             "required": false,
-            "order": 2
-        },
-        "phenv_use_sudo": {
-            "description": "Run phenv via sudo when auto-upgrading Python 2.7 playbooks (recommended on SOAR 6.x). Set false only if phenv runs without sudo.",
-            "data_type": "string",
-            "required": false,
-            "default": "true",
             "order": 3
         },
-        "phenv_path": {
-            "description": "Optional full path to phenv binary (default: $PHANTOM_HOME/bin/phenv, usually /opt/phantom/bin/phenv).",
+        "soar_loopback_allow_insecure_tls": {
+            "description": "Lab-only override that disables certificate verification for SOAR REST loopback. Keep disabled; prefer a trusted certificate or CA bundle.",
+            "data_type": "boolean",
+            "required": false,
+            "default": false,
+            "order": 4
+        },
+        "soar_loopback_ca_bundle": {
+            "description": "Optional absolute path to a PEM CA bundle trusted for HTTPS SOAR REST loopback.",
             "data_type": "string",
             "required": false,
-            "order": 4
+            "order": 5
         },
         "asset_defaults": {
             "description": "JSON map of scaffold asset keys to configured SOAR asset names, e.g. {\"servicenow\": \"snow_lab\", \"soar\": \"local\"}. Used at import to avoid Missing Configurations in the Visual Editor.",
             "data_type": "string",
             "required": false,
-            "order": 5
+            "order": 6
         },
         "custom_templates_json": {
-            "description": "JSON array of organization playbook templates (id must start with org-). Merged into the template library without rebuilding the app. See soar_playbook_builder/docs/CUSTOMIZATION.md (bundled) or sample_data/sample_org_templates.json.",
+            "description": "Legacy Python organization templates. Disabled by default because executable source bypasses the IR/preflight trust boundary. Prefer custom_ir_templates_json.",
             "data_type": "string",
             "required": false,
-            "order": 6
+            "order": 7
+        },
+        "custom_ir_templates_json": {
+            "description": "Strict organization templates as Playbook IR 1.0 JSON (id must start with org-). Review-only until trusted import is live-qualified. See bundled CUSTOMIZATION.md.",
+            "data_type": "string",
+            "required": false,
+            "order": 8
+        },
+        "allow_legacy_python_templates": {
+            "description": "Lab-only compatibility override that loads custom_templates_json Python. Keep disabled; legacy Python templates are outside the trusted compiler path.",
+            "data_type": "boolean",
+            "required": false,
+            "default": false,
+            "order": 9
         },
         "playbook_defaults_json": {
             "description": "JSON defaults for readiness auto-fix: {\"constants\": {\"SLACK_CHANNEL\": \"#soc-alerts\"}, \"assets\": {\"slack\": \"slack_lab\"}}. Constants replace placeholders in generated Python; assets merge with asset_defaults.",
             "data_type": "string",
             "required": false,
-            "order": 7
+            "order": 10
         },
         "es_web_url": {
             "description": "Splunk ES web URL (e.g. https://es.example.com:8000) — enables Back to Mission Control link in the sidecar when event_id is in the URL.",
             "data_type": "string",
             "required": false,
-            "order": 8
+            "order": 11
         },
         "sample_cases_json": {
             "description": "Optional JSON array of demo/sample cases for the sidecar case picker (merged with built-in samples). See sample_data/sample_cases.json.",
             "data_type": "string",
             "required": false,
-            "order": 9
+            "order": 12
         },
         "operating_mode": {
             "description": "Air-gap operating mode: air_gapped (no egress actions), restricted (warn on unknown egress), connected (default).",
             "data_type": "string",
             "required": false,
             "default": "connected",
-            "order": 10
+            "order": 13
         },
         "default_ui_mode": {
             "description": "Default sidecar persona when URL has no mode=: studio, assistant, coach, or tutor. URL mode= always overrides.",
             "data_type": "string",
             "required": false,
             "default": "studio",
-            "order": 11
+            "order": 14
         }
     },
     "actions": [
@@ -235,17 +255,10 @@
         {
             "action": "export asset config",
             "identifier": "export_asset_config",
-            "description": "Export Playbook Builder asset configuration as JSON for migration (secrets redacted by default)",
+            "description": "Export non-secret Playbook Builder asset configuration as JSON for migration (secrets are always excluded)",
             "type": "investigate",
             "read_only": true,
-            "parameters": {
-                "include_secrets": {
-                    "description": "Include soar_rest_token in export (default false)",
-                    "data_type": "string",
-                    "required": false,
-                    "order": 0
-                }
-            },
+            "parameters": {},
             "output": [
                 {
                     "data_path": "action_result.data.*.copy_json",

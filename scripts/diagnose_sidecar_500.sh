@@ -34,8 +34,11 @@ if [[ -z "$HANDLER" ]]; then
   red "Could not resolve handler URL — check SOAR_URL and credentials in scripts/env.e2e.local"
   exit 1
 fi
-SCAFFOLD_URL="${HANDLER}?action=scaffold&pattern=hello"
-HTTP=$(curl -sk -u "${SOAR_USER}:${SOAR_PASSWORD}" -o /tmp/pb_scaffold.json -w "%{http_code}" "$SCAFFOLD_URL")
+SCAFFOLD_URL="${HANDLER}"
+HTTP=$(curl -sk -u "${SOAR_USER}:${SOAR_PASSWORD}" -o /tmp/pb_scaffold.json -w "%{http_code}" \
+  -X POST "$SCAFFOLD_URL" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"scaffold","pattern":"hello"}')
 if [[ "$HTTP" == "200" ]] && grep -q '"status".*"success"' /tmp/pb_scaffold.json 2>/dev/null; then
   grn "Scaffold HTTP 200 — Playbook Builder app handler works"
 else

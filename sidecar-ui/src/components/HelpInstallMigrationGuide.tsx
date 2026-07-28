@@ -10,12 +10,12 @@ const MODE_A_STEPS = [
 
 const MODE_B_EXTRA = [
   "Deploy MCP agent bridge on a host SOAR can reach; configure LLM on the bridge host.",
-  "Set mcp_bridge_url on the asset (e.g. http://bridge:8003/agent).",
+  "Set mcp_bridge_url on the asset (e.g. https://bridge.internal:8003/agent). Plain HTTP requires the lab-only override.",
   "Run test connectivity on the asset — sidecar pill should show AI connected when LLM is configured.",
 ];
 
 const MIGRATION_BEFORE_SHUTDOWN = [
-  "Export Playbook Builder asset configuration (asset_defaults, mcp_bridge_url, es_web_url, custom_templates_json, etc.).",
+  "Export Playbook Builder asset configuration (asset_defaults, mcp_bridge_url, es_web_url, custom_ir_templates_json, etc.).",
   "Export any playbooks you authored on the old SOAR (Playbooks → export).",
   "Save dist/soar_playbook_builder.tgz and MCP bridge host/LLM settings.",
 ];

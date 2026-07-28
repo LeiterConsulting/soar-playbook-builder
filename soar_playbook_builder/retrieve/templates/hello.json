@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0.0",
+  "id": "hello",
+  "name": "Hello World",
+  "description": "Minimal no-integration smoke workflow that formats a deterministic message.",
+  "entrypoint": "start",
+  "nodes": [
+    {"id": "start", "type": "start", "next": "format_message"},
+    {"id": "format_message", "type": "format", "template": "Hello from SOAR Playbook Builder", "inputs": {}, "output": "message", "next": "complete"},
+    {"id": "complete", "type": "end", "outcome": "success"}
+  ],
+  "metadata": {"capability_index_version": "template-library-v1", "operating_mode": "air_gapped", "template_id": "hello", "labels": ["smoke", "offline"]}
+}

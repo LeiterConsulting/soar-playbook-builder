@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0.0",
+  "id": "servicenow-incident",
+  "name": "ServiceNow P1 Incident",
+  "description": "Create a ServiceNow ticket from a reviewed incident summary.",
+  "entrypoint": "start",
+  "nodes": [
+    {"id": "start", "type": "start", "next": "create_ticket"},
+    {"id": "create_ticket", "type": "action", "app": "servicenow", "action": "create ticket", "asset": {"kind": "asset_unbound"}, "parameters": {"short_description": {"kind": "literal", "value": "SOAR incident requires analyst review"}, "severity": {"kind": "literal", "value": "1"}}, "on_success": "complete", "on_failure": "failed"},
+    {"id": "complete", "type": "end", "outcome": "success"},
+    {"id": "failed", "type": "end", "outcome": "failure"}
+  ],
+  "metadata": {"capability_index_version": "template-library-v1", "operating_mode": "connected", "template_id": "servicenow-incident", "labels": ["servicenow", "itsm", "ticket"]}
+}

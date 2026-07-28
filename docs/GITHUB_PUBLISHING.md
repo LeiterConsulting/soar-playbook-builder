@@ -1,4 +1,4 @@
-# GitHub — wts408/soar-playbook-builder
+# GitHub — LeiterConsulting/soar-playbook-builder
 
 This repository is the **standalone home** for the SOAR Playbook Builder Splunk SOAR app. It is **not** part of `deslicer/mcp-for-splunk`.
 
@@ -11,28 +11,29 @@ git init
 git add -A
 git status   # confirm: no .env, no scripts/env.e2e.local, no dist/
 
-git commit -m "Initial release: SOAR Playbook Builder 2.26.0"
+git commit -m "Release: SOAR Playbook Builder"
 
 # Create repo on GitHub (browser or CLI):
 #   https://github.com/new → name: soar-playbook-builder → Private or Public
 
 git branch -M main
-git remote add origin git@github.com:wts408/soar-playbook-builder.git
+git remote add origin git@github.com:LeiterConsulting/soar-playbook-builder.git
 git push -u origin main
 ```
 
 With GitHub CLI:
 
 ```bash
-gh repo create wts408/soar-playbook-builder --private --source=. --remote=origin --push
+gh repo create LeiterConsulting/soar-playbook-builder --private --source=. --remote=origin --push
 ```
 
 ## Release workflow
 
 ```bash
 ./package_app.sh
-git tag v2.26.0
-git push origin v2.26.0
+APP_VERSION="$(python3 -c 'import json; print(json.load(open("soar_playbook_builder/soar_playbook_builder.json"))["app_version"])')"
+git tag "v${APP_VERSION}"
+git push origin "v${APP_VERSION}"
 ```
 
 Action `.github/workflows/release.yml` uploads `dist/soar_playbook_builder.tgz` to the GitHub Release.

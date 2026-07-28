@@ -35,7 +35,7 @@
   --action: #f5a623;
   --decision: #e8c547;
   --end: #6b7280;
-  --font: "Inter", "Splunk Platform Sans", "Segoe UI", system-ui, sans-serif;
+  --font: "Splunk Platform Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-mono: "SF Mono", "Consolas", "Monaco", monospace;
   --chrome-height: 52px;
 }
@@ -56,6 +56,13 @@ body,
 }
 
 #root {
+  display: flex;
+  flex-direction: column;
+}
+
+.app-main {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -2077,7 +2084,7 @@ textarea::placeholder {
 
 .btn-primary {
   background: var(--primary);
-  color: #fff;
+  color: #071017;
 }
 
 .btn-accent {
@@ -3899,4 +3906,164 @@ ul.help-guide-topic-body li::marker {
 .tutor-quick-label {
   font-size: 11px;
   color: var(--muted);
+}
+
+/* ── Trusted IR review (preview-only trust boundary) ── */
+.trusted-ir-review {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(0, 156, 235, 0.28);
+  border-radius: 6px;
+  background:
+    linear-gradient(135deg, rgba(0, 156, 235, 0.08), transparent 55%),
+    var(--bg-elevated);
+}
+
+.trusted-ir-review-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.trusted-ir-review-head > div {
+  display: grid;
+  gap: 2px;
+}
+
+.trusted-ir-review-head strong {
+  font-size: 12px;
+}
+
+.trusted-ir-review-head span,
+.trusted-ir-note {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.trusted-ir-note {
+  margin: 9px 0 0;
+  line-height: 1.45;
+}
+
+.trusted-ir-note.warn {
+  color: var(--warn);
+}
+
+.trusted-ir-result {
+  display: grid;
+  gap: 9px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.trusted-ir-result > p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.trusted-ir-result.blocked > p {
+  color: var(--warn);
+}
+
+.trusted-ir-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.trusted-ir-badges span {
+  padding: 3px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.trusted-ir-result.ok .trusted-ir-badges span:first-child,
+.trusted-ir-result.degraded .trusted-ir-badges span:first-child {
+  color: var(--success);
+  border-color: rgba(92, 192, 92, 0.35);
+  background: var(--success-soft);
+}
+
+.trusted-ir-result.blocked .trusted-ir-badges span:nth-child(2) {
+  color: var(--warn);
+  border-color: rgba(245, 166, 35, 0.35);
+  background: var(--warn-soft);
+}
+
+.trusted-ir-gaps {
+  display: grid;
+  gap: 6px;
+  max-height: 168px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.trusted-ir-gaps li {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 7px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--warn);
+  background: var(--warn-soft);
+  font-size: 10px;
+}
+
+.trusted-ir-gaps code {
+  color: var(--text-secondary);
+}
+
+.trusted-ir-gaps span {
+  color: var(--muted);
+}
+
+.trusted-ir-provenance {
+  margin-top: 0;
+}
+
+.trusted-ir-provenance dl {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 0;
+}
+
+.trusted-ir-provenance dl > div {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr);
+  gap: 8px;
+}
+
+.trusted-ir-provenance dt {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.trusted-ir-provenance dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+@media (max-width: 720px) {
+  .trusted-ir-review-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .trusted-ir-gaps li {
+    grid-template-columns: 1fr;
+  }
 }

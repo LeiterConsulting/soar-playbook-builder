@@ -43,7 +43,15 @@ export function BuildPage({ coachLaneOnly = false }: { coachLaneOnly?: boolean }
           <div className="chat-head">
             <h2>Chat</h2>
           </div>
-          <div id="messages" className="chat-panel">
+          <div
+            id="messages"
+            className="chat-panel"
+            role="log"
+            aria-label="Chat history"
+            aria-live="polite"
+            aria-relevant="additions text"
+            tabIndex={0}
+          >
             {b.messages.length === 0 && (
               <p className="chat-empty">
                 {b.coachTab === "explain"
@@ -80,6 +88,13 @@ export function BuildPage({ coachLaneOnly = false }: { coachLaneOnly?: boolean }
             onLoad={() => void b.handleScaffold()}
             onValidate={() => void b.handleValidate()}
             onUseScenarioPrompt={(s) => b.setInput(s.examplePrompt)}
+            onTrustedReview={(templateId) =>
+              b.apiPost({
+                action: "trusted_ir_template_review",
+                template_id: templateId,
+                operating_mode: "air_gapped",
+              })
+            }
             busy={b.busy}
             scoreLabel={b.scoreLabel}
           />

@@ -48,28 +48,19 @@ function parseJson(text: string, status: number): BuilderResponse {
   if (status === 401) {
     return {
       status: "error",
+      error_code: "SOAR_UNAUTHORIZED",
       error:
         "SOAR returned 401 Unauthorized on POST. Re-open this page from SOAR while logged in, " +
         "or your session/CSRF token may have expired. Try logging out and back into SOAR, then reload.",
       http_status: status,
-      raw_body: text.slice(0, 500),
     };
   }
   if (status >= 500) {
-    let detail = text.slice(0, 500);
-    try {
-      const parsed = JSON.parse(text) as { error?: string };
-      if (parsed.error) detail = parsed.error;
-    } catch {
-      /* use raw text */
-    }
     return {
       status: "error",
-      error:
-        `SOAR server error (${status}). ${detail || "The handler may have timed out."} ` +
-        "Check SOAR logs (/opt/phantom/var/log/) if this persists.",
+      error_code: "SOAR_SERVER_ERROR",
+      error: `SOAR server error (${status}). Check protected SOAR logs if this persists.`,
       http_status: status,
-      raw_body: text.slice(0, 500),
     };
   }
   try {
@@ -77,7 +68,8 @@ function parseJson(text: string, status: number): BuilderResponse {
   } catch {
     return {
       status: "error",
-      error: `Invalid response from SOAR (${status}): ${text.slice(0, 200)}`,
+      error_code: "INVALID_SOAR_RESPONSE",
+      error: `SOAR returned a non-JSON response (${status}). Check protected SOAR logs.`,
       http_status: status,
     };
   }
@@ -190,8 +182,17 @@ export function createApiClient(opts: ApiClientOptions) {
   return {
     apiGet,
     apiPost,
-    apiChat: (message: string, pattern?: string, lane?: string) =>
-      apiPost({ action: "chat", message, pattern, ...(lane ? { lane } : {}) }, 90000),
+    apiChat: (message: string, pattern?: string, lane?: string, source?: string) =>
+      apiPost(
+        {
+          action: "chat",
+          message,
+          pattern,
+          ...(lane ? { lane } : {}),
+          ...(source ? { source } : {}),
+        },
+        90000,
+      ),
     apiTroubleshoot: (query?: string) =>
       apiGet({ action: "troubleshoot", q: query || undefined }),
   };
@@ -201,9 +202,9 @@ export function createApiClient(opts: ApiClientOptions) {
 export function resolveHandlerBase(): string {
   const envBase = import.meta.env.VITE_SOAR_HANDLER_BASE as string | undefined;
   if (envBase?.trim()) {
-    return envBase.trim().replace(/\/$/, "");
+    return envBase.trim().replace(/\/+$/, "");
   }
-  return window.location.pathname.replace(/\/chat.*$/, "");
+  return window.location.pathname.replace(/\/chat.*$/, "").replace(/\/+$/, "");
 }
 
 export function isDevWithoutBackend(): boolean {

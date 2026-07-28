@@ -5,6 +5,41 @@ All notable changes to the **SOAR Playbook Builder** app (`soar_playbook_builder
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
 Versioning aligns with `app_version` in `soar_playbook_builder.json`.
 
+## [2.27.0] — 2026-07-28
+
+### Offline trusted-core foundation
+
+- Added closed Playbook IR 1.0, deterministic Python/visual dual compilation,
+  strict preflight GapReports, canonical hashes, and lossless round trips.
+- Added 40 exact no-model cases covering all deterministic gap IDs, 11
+  canonical IR templates, and a 20-intent offline retrieval corpus.
+- Added a constrained on-prem model provider, strict duplicate-safe decoder,
+  bounded structured repair, and adversarial provider/model evaluations.
+- Added review-only REST/UI actions with explicit Import lock and artifact
+  provenance. Trusted import and Run remain disabled pending live SOAR gates.
+- Added strict organization IR configuration; executable legacy Python
+  templates are ignored by default and visibly untrusted when explicitly
+  enabled for a lab.
+
+### Security, resilience, and release engineering
+
+- Hardened bridge and SOAR loopback transport, request/action policy, response
+  sanitization/security headers, configuration export, and capability-index
+  atomic recovery.
+- Retired the SOAR-6/Python-2 privileged `phenv` migration subsystem from the
+  SOAR-8.5/Python-3.13 package and stopped automatic legacy-playbook deletion.
+- Added SHA-pinned CI actions, dependency/secret/SAST gates, Node 24 LTS,
+  deterministic archive construction and inspection, packaged license notices,
+  release checksums, and a CycloneDX UI SBOM.
+- Added repeatable UI trust-boundary/navigation and Chromium tests, real-browser
+  accessibility and responsive checks, zero-external-request assertions,
+  coverage reporting, and CI test gates before web builds.
+- Fixed offline root-path URL construction that could attempt a DNS request for
+  the logo; added a main landmark, keyboard-focusable chat history, compliant
+  primary-button contrast, and a truly disabled pre-import SOAR link.
+- Added threat model, offline-readiness/live-handoff report, trusted release
+  plan, and compiler/model/retrieval contracts.
+
 ## [2.26.0] — 2026-07-28
 
 ### Full persona integration (ES + Splunk Enterprise + asset defaults)

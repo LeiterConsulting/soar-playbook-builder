@@ -3,17 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <title>SOAR Playbook Builder</title>
-  <style>
-    body { font-family: system-ui, sans-serif; margin: 0; padding: 12px; font-size: 13px; }
-    h2 { margin: 0 0 8px; font-size: 15px; }
-    .banner { background: #fff3cd; border: 1px solid #ffc107; padding: 8px; border-radius: 4px; display: none; }
-    .banner.show { display: block; }
-    button { margin-top: 8px; padding: 6px 12px; cursor: pointer; }
-    #log { margin-top: 12px; white-space: pre-wrap; background: #f5f5f5; padding: 8px; border-radius: 4px; max-height: 200px; overflow: auto; }
-    .instructions { color: #555; margin-bottom: 12px; }
-  </style>
+  <link rel="stylesheet" href="./playbook_builder_widget.css" />
 </head>
-<body>
+<body data-mcp-url="{{MCP_URL}}">
   <h2>SOAR Playbook Builder</h2>
   <p class="instructions">{{AI_INSTRUCTIONS}}</p>
   <label>Playbook ID: <input type="number" id="playbook_id" placeholder="e.g. 42" /></label>
@@ -21,39 +13,6 @@
   <button type="button" id="reset">Reset snapshot</button>
   <div id="refresh_banner" class="banner">Playbook changed — refresh the Visual Editor to see updates.</div>
   <div id="log"></div>
-  <script>
-    const MCP_URL = "{{MCP_URL}}";
-    const log = (msg) => {
-      const el = document.getElementById("log");
-      el.textContent = (el.textContent ? el.textContent + "\n" : "") + msg;
-    };
-
-    async function poll(reset) {
-      const pid = document.getElementById("playbook_id").value;
-      if (!pid) { log("Enter playbook ID"); return; }
-      const handlerBase = window.location.pathname.replace(/\/widget.*$/, "");
-      const url = handlerBase + "/poll_playbook";
-      try {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ playbook_id: parseInt(pid, 10), reset_snapshot: reset })
-        });
-        const data = await res.json();
-        log(JSON.stringify(data, null, 2));
-        document.getElementById("refresh_banner").classList.toggle("show", !!data.changed);
-      } catch (e) {
-        log("Poll failed: " + e);
-      }
-    }
-
-    document.getElementById("poll").onclick = () => poll(false);
-    document.getElementById("reset").onclick = () => poll(true);
-
-    if (MCP_URL) {
-      log("External MCP: " + MCP_URL);
-      log("Use Cursor with X-MCP-Toolsets: splunk,soar,soar_tutor");
-    }
-  </script>
+  <script src="./playbook_builder_widget.js"></script>
 </body>
 </html>

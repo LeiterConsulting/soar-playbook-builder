@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0.0",
+  "id": "failed-logins-okta",
+  "name": "Excessive Failed Logins Okta",
+  "description": "Look up an Okta user and require approval before clearing active sessions.",
+  "entrypoint": "start",
+  "nodes": [
+    {"id": "start", "type": "start", "next": "lookup_user"},
+    {"id": "lookup_user", "type": "action", "app": "okta", "action": "get user", "asset": {"kind": "asset_unbound"}, "parameters": {"username": {"kind": "datapath", "scope": "artifact", "path": ["cef", "destinationUserName"]}}, "on_success": "approval", "on_failure": "failed"},
+    {"id": "approval", "type": "prompt", "message": "Approve clearing the user's active Okta sessions?", "response_key": "approval", "choices": ["Approve", "Reject"], "on_success": "clear_sessions", "on_failure": "cancelled", "on_timeout": "timed_out"},
+    {"id": "clear_sessions", "type": "action", "app": "okta", "action": "clear user sessions", "asset": {"kind": "asset_unbound"}, "parameters": {"username": {"kind": "datapath", "scope": "artifact", "path": ["cef", "destinationUserName"]}}, "on_success": "complete", "on_failure": "failed"},
+    {"id": "complete", "type": "end", "outcome": "success"},
+    {"id": "cancelled", "type": "end", "outcome": "neutral"},
+    {"id": "timed_out", "type": "end", "outcome": "neutral"},
+    {"id": "failed", "type": "end", "outcome": "failure"}
+  ],
+  "metadata": {"capability_index_version": "template-library-v1", "operating_mode": "restricted", "template_id": "failed-logins-okta", "labels": ["okta", "identity", "failed_logins"]}
+}

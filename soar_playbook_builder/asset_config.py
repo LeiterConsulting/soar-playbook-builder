@@ -17,16 +17,19 @@ from asset_resolver import _asset_field
 EXPORT_VERSION = "1.0"
 EXPORTABLE_KEYS: tuple[str, ...] = (
     "mcp_bridge_url",
+    "mcp_bridge_allow_insecure_http",
+    "soar_loopback_allow_insecure_tls",
+    "soar_loopback_ca_bundle",
     "ai_instructions",
     "asset_defaults",
     "custom_templates_json",
+    "custom_ir_templates_json",
+    "allow_legacy_python_templates",
     "playbook_defaults_json",
     "es_web_url",
     "sample_cases_json",
     "operating_mode",
     "default_ui_mode",
-    "phenv_use_sudo",
-    "phenv_path",
 )
 SECRET_KEYS: frozenset[str] = frozenset({"soar_rest_token"})
 
@@ -35,8 +38,8 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def configuration_from_cfg(cfg: dict[str, Any], *, include_secrets: bool = False) -> dict[str, str]:
-    """Extract allowlisted configuration fields from sidecar cfg dict."""
+def configuration_from_cfg(cfg: dict[str, Any]) -> dict[str, str]:
+    """Extract non-secret, allowlisted configuration fields."""
     out: dict[str, str] = {}
     for key in EXPORTABLE_KEYS:
         raw = cfg.get(key)
@@ -45,23 +48,16 @@ def configuration_from_cfg(cfg: dict[str, Any], *, include_secrets: bool = False
         val = str(raw).strip()
         if val:
             out[key] = val
-    if include_secrets:
-        token = str(cfg.get("soar_rest_token") or "").strip()
-        if token:
-            out["soar_rest_token"] = token
-    elif cfg.get("soar_rest_token"):
-        out["soar_rest_token"] = "***REDACTED***"
     return out
 
 
 def export_asset_config_payload(
     cfg: dict[str, Any],
     *,
-    include_secrets: bool = False,
     sidecar_url: str = "",
 ) -> dict[str, Any]:
-    """Return migration-friendly JSON bundle (secrets redacted by default)."""
-    configuration = configuration_from_cfg(cfg, include_secrets=include_secrets)
+    """Return a migration bundle that never contains secret values."""
+    configuration = configuration_from_cfg(cfg)
     bundle = {
         "export_version": EXPORT_VERSION,
         "exported_at": _utc_now(),
@@ -71,11 +67,14 @@ def export_asset_config_payload(
     copy_json = json.dumps(bundle, indent=2, sort_keys=True)
     return {
         "status": "success",
-        "message": "Asset configuration exported — save copy_json before migrating SOAR instances.",
+        "message": (
+            "Non-secret asset configuration exported. Re-enter secrets manually "
+            "on the destination SOAR instance."
+        ),
         "export_version": EXPORT_VERSION,
         "exported_at": bundle["exported_at"],
         "configuration": configuration,
-        "secrets_redacted": not include_secrets and bool(cfg.get("soar_rest_token")),
+        "secrets_redacted": bool(cfg.get("soar_rest_token")),
         "sidecar_url": sidecar_url,
         "copy_json": copy_json,
         "field_count": len(configuration),
@@ -91,10 +90,6 @@ def _merge_import_config(existing: dict[str, Any], incoming: dict[str, Any]) -> 
                 merged[key] = val
         elif key in existing and existing[key] is not None:
             merged[key] = str(existing[key])
-    if "soar_rest_token" in incoming:
-        token = str(incoming["soar_rest_token"]).strip()
-        if token and token != "***REDACTED***":
-            merged["soar_rest_token"] = token
     return merged
 
 

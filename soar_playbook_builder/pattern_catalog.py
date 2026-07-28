@@ -176,6 +176,10 @@ def list_patterns_payload(org_registry: Any | None = None) -> dict[str, Any]:
                 "requires_confirm": meta.get("requires_confirm", False),
                 "destructive_actions": meta.get("destructive_actions") or [],
                 "org": bool(row.get("org")),
+                "trusted_ir": bool(row.get("trusted_ir")),
+                "template_kind": str(
+                    row.get("template_kind") or "legacy_python"
+                ),
             }
         )
     enriched = [pattern_meta(row["id"], org_registry=org_registry) for row in all_rows]

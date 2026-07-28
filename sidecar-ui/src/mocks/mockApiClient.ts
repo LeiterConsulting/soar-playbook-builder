@@ -16,6 +16,7 @@ import {
   mockReadiness,
   mockRun,
   mockScaffold,
+  mockTrustedIrReview,
   mockTroubleshoot,
 } from "./fixtures";
 
@@ -61,7 +62,13 @@ export function createMockApiClient(opts: ApiClientOptions) {
     await delay(180);
     const action = String(body.action || "");
     if (action === "chat") return mockChat(String(body.message || ""), String(body.pattern || ""), String(body.lane || ""));
+    if (action === "scaffold" || action === "validate" || action === "preview") {
+      return mockScaffold(String(body.pattern || opts.getPattern()));
+    }
     if (action === "readiness_check") return mockReadiness();
+    if (action === "trusted_ir_template_review") {
+      return mockTrustedIrReview(String(body.template_id || "hello"));
+    }
     if (action === "import_draft") return mockImport();
     if (action === "run_playbook") return mockRun();
     if (action === "provision_demo_case") return mockProvisionDemoCase(body);
@@ -106,7 +113,8 @@ export function createMockApiClient(opts: ApiClientOptions) {
   return {
     apiGet,
     apiPost,
-    apiChat: (message: string, pattern?: string) => apiPost({ action: "chat", message, pattern }),
+    apiChat: (message: string, pattern?: string, lane?: string, source?: string) =>
+      apiPost({ action: "chat", message, pattern, lane, source }),
     apiTroubleshoot: () => apiGet({ action: "troubleshoot" }),
   };
 }

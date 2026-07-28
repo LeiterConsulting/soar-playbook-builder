@@ -2,8 +2,14 @@
 
 A plain-language guide for installing, configuring, and using the Playbook Builder in your Splunk SOAR environment.
 
-**Current version:** 2.7.2  
+**Current version:** 2.27.0
 **App package:** `soar_playbook_builder.tgz`
+
+> **Engineering-alpha boundary:** strict Playbook IR is available for
+> deterministic review and preview only. Its Import control is locked until
+> live SOAR authorization, native-VPE, idempotency, and runtime gates pass.
+> The existing Python scaffold/import path is retained only for isolated legacy
+> lab evaluation and is not represented as trusted.
 
 **Also read:** [ARCHITECTURE.md](./ARCHITECTURE.md) (Mode A vs B) · [MCP_INTEGRATION.md](./MCP_INTEGRATION.md) · **[ON_PREM_LLM.md](./ON_PREM_LLM.md)** (private/on-prem LLM) · [EXAMPLE_WALKTHROUGHS.md](./EXAMPLE_WALKTHROUGHS.md) · **[NL_TESTING_AND_RECOVERY.md](./NL_TESTING_AND_RECOVERY.md)** (NL QA & recovery loop) · [CUSTOMIZATION.md](./CUSTOMIZATION.md) · [ATTRIBUTION.md](../ATTRIBUTION.md)
 
@@ -91,7 +97,7 @@ This is the main deliverable. Install it through the SOAR Apps UI.
 
 **Built by:**
 ```bash
-cd packaging/soar-playbook-builder-app
+cd soar-playbook-builder
 ./package_app.sh
 # Output: dist/soar_playbook_builder.tgz
 ```
@@ -165,12 +171,19 @@ Used when you want:
 
 | Setting | Required? | Example | Purpose |
 |---------|-----------|---------|---------|
-| **mcp_bridge_url** | No (for offline mode) | `http://127.0.0.1:8003/agent` | Where SOAR sends chat for NL/AI |
+| **mcp_bridge_url** | No (for offline mode) | `https://bridge.internal:8003/agent` | Where SOAR sends chat for NL/AI |
+| **mcp_bridge_allow_insecure_http** | No | `false` | Lab-only opt-in for a plain HTTP bridge |
+| **soar_loopback_ca_bundle** | No | `/etc/pki/ca-trust/source/anchors/soar.pem` | PEM CA used to verify internal SOAR REST loopback |
+| **soar_loopback_allow_insecure_tls** | No | `false` | Lab-only fallback when a trusted SOAR certificate is not yet available |
 | **ai_instructions** | No | `Production SOAR — classic Python playbooks` | Short label shown in the sidecar header |
 
 **Offline-only setup:** Leave `mcp_bridge_url` at default or blank. Scaffolds and import still work.
 
-**Full AI setup:** Set `mcp_bridge_url` to a URL SOAR can reach (see [MCP setup](#optional-mcp-server-setup) below).
+**Full AI setup:** Set `mcp_bridge_url` to an HTTPS URL SOAR can reach (see [MCP setup](#optional-mcp-server-setup) below). Plain HTTP is rejected unless the lab-only override is enabled.
+
+**SOAR REST loopback:** Certificate verification is enabled by default. Prefer a
+certificate trusted by the host or set `soar_loopback_ca_bundle`. The insecure
+TLS override is for isolated lab diagnosis only.
 
 ### Step 4 — Test connectivity
 
@@ -196,7 +209,7 @@ https://your-soar.example.com:8443/rest/handler/soarplaybookbuilder_<uuid>/playb
 **Easy way to get the URL** (after install):
 
 ```bash
-cd packaging/soar-playbook-builder-app
+cd soar-playbook-builder
 SOAR_URL=https://your-soar:8443 \
 SOAR_USER=your_user \
 SOAR_PASS=your_password \
@@ -346,14 +359,13 @@ Base: `https://<soar>/rest/handler/<directory>/<asset>/`
 |-------|--------|---------|
 | `chat` | GET | Sidecar UI page |
 | `chat?action=steps` | GET | Builder step definitions |
-| `chat?action=scaffold&pattern=…` | GET | Generate template |
-| `chat?action=validate&pattern=…` | GET | Validate current pattern/source |
-| `chat?message=…` | GET | Send chat message (NL build) |
+| `chat` with `{"action":"scaffold","pattern":"…"}` | POST | Generate template |
+| `chat` with `{"action":"validate","pattern":"…"}` | POST | Validate current pattern/source |
+| `chat` with `{"action":"chat","message":"…"}` | POST | Send chat message (NL build) |
 | `chat?action=bridge_status` | GET | Check MCP reachability from SOAR |
-| `chat?poll=1&playbook_id=…` | GET | Poll for VPE changes |
-| `chat` | POST | Import draft (`action=import_draft`) |
+| `chat` | POST | Import draft (`action=import_draft`) and other mutations |
 | `widget` | GET | Compact VPE poll widget |
-| `poll_playbook` | GET/POST | Playbook change fingerprint |
+| `poll_playbook` | POST | Playbook change fingerprint |
 
 ---
 

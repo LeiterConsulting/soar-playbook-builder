@@ -1,24 +1,39 @@
 {
   "name": "soar-playbook-builder-sidecar",
   "private": true,
-  "version": "2.26.0",
+  "version": "2.27.0",
   "type": "module",
+  "engines": {
+    "node": ">=24 <27"
+  },
   "scripts": {
     "dev": "vite",
+    "dev:lan": "vite --host 0.0.0.0",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
     "build": "tsc --noEmit && vite build && cp templates/agent_chat.html ../soar_playbook_builder/widgets/agent_chat.html && rm -f ../soar_playbook_builder/widgets/index.html",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "preview:lan": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
     "highlight.js": "^11.11.1",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "react-router-dom": "^7.18.1"
+    "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
+    "@playwright/test": "1.62.0",
+    "@testing-library/jest-dom": "7.0.0",
+    "@testing-library/react": "16.3.2",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.5.0",
+    "@vitest/coverage-v8": "4.1.10",
+    "axe-core": "4.12.1",
+    "jsdom": "29.0.0",
     "typescript": "~5.8.3",
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "vitest": "4.1.10"
   }
 }

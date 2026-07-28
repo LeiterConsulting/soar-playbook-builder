@@ -22,7 +22,7 @@ const WORKFLOW_STEPS = [
     title: "Start from a template (works offline)",
     body: [
       "On the Build tab, open Templates at the bottom. Pick a pattern from the dropdown (Getting started, Identity, ES, etc.).",
-      "The header shows how many built-in and org templates are loaded — the library is meant to grow via custom_templates_json on the asset.",
+      "The header shows how many built-in and org templates are loaded — grow the trusted review library via custom_ir_templates_json on the asset.",
       "Read the detail panel — badges, lab walkthrough, and example NL prompt. Collapse Templates if you need more chat space.",
       "Click Load template. The Chat log and Preview pane update with blocks and Python source.",
     ],

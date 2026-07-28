@@ -82,22 +82,26 @@ export function ActionBar({ variant }: ActionBarProps) {
             Run on this case
           </button>
         )}
-        <a
-          className={`btn${b.linkedPlaybookId ? " btn-open" : " secondary"}`}
-          href={b.openHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          title={
-            b.linkedPlaybookId
-              ? `Open in Visual Editor (${b.linkedPlaybookSlug || b.linkedPlaybookId})`
-              : "Import first"
-          }
-          onClick={(e) => {
-            if (!b.linkedPlaybookId) e.preventDefault();
-          }}
-        >
-          Open in SOAR
-        </a>
+        {b.linkedPlaybookId ? (
+          <a
+            className="btn btn-open"
+            href={b.openHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Open in Visual Editor (${b.linkedPlaybookSlug || b.linkedPlaybookId})`}
+          >
+            Open in SOAR
+          </a>
+        ) : (
+          <button
+            type="button"
+            className="btn secondary"
+            disabled
+            title="Import first"
+          >
+            Open in SOAR
+          </button>
+        )}
       </div>
     </div>
   );
